@@ -2,7 +2,6 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
-import { metaForms, metaFormId } from "@/lib/lead-categories";
 
 export const runtime = "nodejs";
 
@@ -62,7 +61,7 @@ function phoneNumber(input: string): string | null {
   return /^\+[1-9]\d{7,14}$/.test(normalized) ? normalized : null;
 }
 
-async function saveLead(leadId: string, pageToken: string, version: string, eventFormId?: unknown): Promise<void> {
+async function saveLead(leadId: string, pageToken: string, version: string): Promise<void> {
   const [existing] = await db.execute<Existing[]>(
     "SELECT id FROM leads WHERE source = 'meta_form' AND external_source_id = ? LIMIT 1", [leadId]
   );
@@ -77,9 +76,6 @@ async function saveLead(leadId: string, pageToken: string, version: string, even
   if (!response.ok) throw new Error(`Meta lead retrieval failed: ${response.status}`);
   const data = await response.json() as MetaLead;
   if (String(data.id) !== leadId || !Array.isArray(data.field_data)) throw new Error("Invalid Meta lead response");
-  const formId = metaFormId(data.form_id) ?? metaFormId(eventFormId);
-  const form = formId ? metaForms[formId] : undefined;
-  const category = form?.category ?? "general";
 
   const fields = new Map<string, string>();
   for (const field of data.field_data as Field[]) {
@@ -90,8 +86,7 @@ async function saveLead(leadId: string, pageToken: string, version: string, even
   const phone = phoneNumber(firstAnswer(fields, "phone_number", "phone", "mobile_number"));
   if (!phone) throw new Error(`Meta lead ${leadId} has no valid phone number`);
   const parent = firstAnswer(fields, "full_name", "parent_name", "parent's_name") ||
-    [firstAnswer(fields, "first_name"), firstAnswer(fields, "last_name")].filter(Boolean).join(" ") ||
-    (category === "school_owner" ? "School contact name pending" : "Parent name pending");
+    [firstAnswer(fields, "first_name"), firstAnswer(fields, "last_name")].filter(Boolean).join(" ") || "Parent name pending";
   const student = firstAnswer(fields, "student_name", "child_name").slice(0, 160);
   const classSought = firstAnswer(fields, "class", "grade", "student_class").slice(0, 40);
   const location = firstAnswer(fields, "preferred_location", "city").slice(0, 255);
@@ -112,11 +107,11 @@ async function saveLead(leadId: string, pageToken: string, version: string, even
     );
     const [lead] = await connection.execute<ResultSetHeader>(
       `INSERT INTO leads (family_id, student_name, class_sought, school_type, preferred_location,
-       source, source_detail, enquiry_category, campaign_data, external_source_id, owner_id, received_at)
-       VALUES (?, ?, ?, 'undecided', ?, 'meta_form', ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))`,
+       source, source_detail, campaign_data, external_source_id, owner_id, received_at)
+       VALUES (?, ?, ?, 'undecided', ?, 'meta_form', ?, ?, ?, ?, UTC_TIMESTAMP(3))`,
       [family.insertId, student || null, classSought || null, location || null,
-        form?.name ?? (formId ? `Form ${formId}` : "Meta Lead Ads"), category,
-        JSON.stringify({ formId, adId: data.ad_id ?? null }), leadId, staff[0].id]
+        typeof data.form_id === "string" && data.form_id.length <= 250 ? `Form ${data.form_id}` : "Meta Lead Ads",
+        JSON.stringify({ formId: data.form_id ?? null, adId: data.ad_id ?? null }), leadId, staff[0].id]
     );
     await connection.execute(
       "INSERT INTO tasks (lead_id, owner_id, title, task_type, due_at) VALUES (?, ?, 'Contact Meta enquiry', 'call_parent', DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 2 HOUR))",
@@ -163,7 +158,7 @@ export async function POST(request: Request) {
         if (change.field !== "leadgen") continue;
         const id = change.value?.leadgen_id;
         if (typeof id !== "string" || !/^\d+$/.test(id)) continue;
-        await saveLead(id, pageToken, version, change.value?.form_id);
+        await saveLead(id, pageToken, version);
       }
     }
     return NextResponse.json({ received: true });
