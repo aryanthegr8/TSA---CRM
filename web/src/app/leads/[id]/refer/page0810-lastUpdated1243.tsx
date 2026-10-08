@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { shortlistSchool } from "../referral-actions";
 
-type Lead = RowDataPacket & { school_type: string; preferred_location: string | null; status: string; enquiry_category: string };
+type Lead = RowDataPacket & { school_type: string; preferred_location: string | null; status: string };
 type School = RowDataPacket & { id: number; name: string; school_type: string; city: string | null; state: string | null; board: string | null; classes_offered: string | null; referral_id: number | null };
 export default async function FindSchools({ params, searchParams }: {
   params: Promise<{ id: string }>;
@@ -16,11 +16,11 @@ export default async function FindSchools({ params, searchParams }: {
   const id = Number((await params).id);
   if (!Number.isSafeInteger(id) || id <= 0) notFound();
   const [leads] = await db.execute<Lead[]>(
-    `SELECT school_type, preferred_location, status, enquiry_category FROM leads WHERE id = ? ${user.role === "counsellor" ? "AND owner_id = ?" : ""} LIMIT 1`,
+    `SELECT school_type, preferred_location, status FROM leads WHERE id = ? ${user.role === "counsellor" ? "AND owner_id = ?" : ""} LIMIT 1`,
     user.role === "counsellor" ? [id, user.id] : [id]
   );
   const lead = leads[0];
-  if (!lead || lead.enquiry_category === "school_owner") notFound();
+  if (!lead) notFound();
   if (["admitted", "lost"].includes(lead.status)) redirect(`/leads/${id}`);
   const { q: query, error } = await searchParams;
   const q = (query || "").trim().slice(0, 100);
@@ -41,7 +41,7 @@ export default async function FindSchools({ params, searchParams }: {
   );
   return <main className="min-h-screen bg-slate-50 px-5 py-9 text-slate-900"><div className="mx-auto max-w-5xl">
     <Link href={`/leads/${id}`} className="text-sm text-blue-700 hover:underline">← Lead details</Link>
-    <h1 className="mt-3 text-3xl font-bold">Assign a partner school</h1>
+    <h1 className="mt-3 text-3xl font-bold">Find partner schools</h1>
     <p className="mt-2 text-slate-600">{lead.school_type === "undecided" ? "All active partners" : `${lead.school_type} schools`} · Preferred location: {lead.preferred_location || "not confirmed"}. Shortlisting stays internal.</p>
     {error && <p role="alert" className="mt-5 rounded-lg bg-red-50 p-3 text-red-700">Check the reason and try again.</p>}
     <form action={`/leads/${id}/refer`} className="mt-6 flex gap-3"><input name="q" defaultValue={q} placeholder="Search school, city, state" maxLength={100} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" /><button className="rounded-lg border border-slate-300 px-4 py-2 font-medium">Search</button></form>

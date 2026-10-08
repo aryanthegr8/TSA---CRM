@@ -37,8 +37,6 @@ export async function assignLead(leadId: number, form: FormData) {
   }
   revalidatePath(`/leads/${leadId}`);
   revalidatePath("/leads");
-  revalidatePath("/leads/boarding-parents");
-  revalidatePath("/leads/school-owners");
   revalidatePath("/my-day");
   revalidatePath("/dashboard");
   redirect(`/leads/${leadId}?assigned=1`);

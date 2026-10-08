@@ -6,7 +6,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
 
-type LeadLock = RowDataPacket & { owner_id: number | null; status: string; enquiry_category: string };
+type LeadLock = RowDataPacket & { owner_id: number | null; status: string };
 type TaskLock = RowDataPacket & { id: number };
 const stages = new Set(["new", "attempting_contact", "connected", "qualified", "exploring_options", "application_in_progress", "on_hold", "lost"]);
 const methods = new Set(["call", "whatsapp", "email", "note"]);
@@ -36,7 +36,7 @@ export async function recordLeadUpdate(leadId: number, form: FormData) {
   try {
     await connection.beginTransaction();
     const [leads] = await connection.execute<LeadLock[]>(
-      "SELECT owner_id, status, enquiry_category FROM leads WHERE id = ? FOR UPDATE", [leadId]
+      "SELECT owner_id, status FROM leads WHERE id = ? FOR UPDATE", [leadId]
     );
     const lead = leads[0];
     if (!lead || (user.role === "counsellor" && lead.owner_id !== user.id)) notFound();
@@ -70,8 +70,8 @@ export async function recordLeadUpdate(leadId: number, form: FormData) {
     }
     if (dueUtc) {
       await connection.execute(
-        "INSERT INTO tasks (lead_id, owner_id, title, task_type, due_at) VALUES (?, ?, ?, ?, ?)",
-        [leadId, lead.owner_id ?? user.id, lead.enquiry_category === "school_owner" ? "Follow up with school owner" : "Follow up with parent", lead.enquiry_category === "school_owner" ? "contact_school" : "call_parent", dueUtc]
+        "INSERT INTO tasks (lead_id, owner_id, title, task_type, due_at) VALUES (?, ?, 'Follow up with parent', 'call_parent', ?)",
+        [leadId, lead.owner_id ?? user.id, dueUtc]
       );
     }
     await connection.commit();
@@ -83,8 +83,6 @@ export async function recordLeadUpdate(leadId: number, form: FormData) {
   }
   revalidatePath(`/leads/${leadId}`);
   revalidatePath("/leads");
-  revalidatePath("/leads/boarding-parents");
-  revalidatePath("/leads/school-owners");
   revalidatePath("/dashboard");
   redirect(`/leads/${leadId}?saved=1`);
 }

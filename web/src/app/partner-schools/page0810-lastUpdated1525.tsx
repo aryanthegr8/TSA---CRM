@@ -1,5 +1,4 @@
 import Link from "next/link";
-import SchoolActions from "./school-actions";
 import { redirect } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
@@ -12,13 +11,11 @@ interface School extends RowDataPacket {
 }
 
 export default async function PartnerSchoolsPage({ searchParams }: {
-  searchParams: Promise<{ q?: string; type?: string; status?: string; notice?: string }>;
+  searchParams: Promise<{ q?: string; type?: string; status?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const params = await searchParams;
-  const canManage = user.role === "admin" || user.role === "manager";
-  const notices: Record<string, string> = { saved: "School updated.", archived: "School moved to Archived. Existing referral history is preserved.", restored: "School restored to active schools.", missing: "School no longer exists." };
   const q = (params.q ?? "").trim().slice(0, 100);
   const type = ["day", "boarding", "both"].includes(params.type ?? "") ? params.type! : "";
   const status = params.status === "archived" ? "archived" : "active";
@@ -41,11 +38,10 @@ export default async function PartnerSchoolsPage({ searchParams }: {
     <div className="mt-3 flex flex-wrap items-end justify-between gap-4"><div>
       <h1 className="text-3xl font-bold">Partner schools</h1>
       <p className="mt-1 text-slate-600">Schools your counsellors work with. Showing up to 200 matches.</p>
-    </div>{canManage && <div className="flex flex-wrap gap-2">
+    </div>{user.role !== "counsellor" && <div className="flex flex-wrap gap-2">
       <Link href="/partner-schools/import" className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium hover:bg-slate-100">Import Excel</Link>
       <Link href="/partner-schools/new" className="rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800">Add partner school</Link>
     </div>}</div>
-    {params.notice && notices[params.notice] && <p role="status" className="mt-5 rounded-lg bg-blue-50 p-3 text-blue-800">{notices[params.notice]}</p>}
     <form className="mt-7 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4" action="/partner-schools">
       <label className="min-w-52 flex-1 text-sm font-medium">Search name or location<input name="q" defaultValue={q} maxLength={100} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" /></label>
       <label className="text-sm font-medium">Type<select name="type" defaultValue={type} className="mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2"><option value="">All types</option><option value="day">Day</option><option value="boarding">Boarding</option><option value="both">Both</option></select></label>
@@ -54,8 +50,8 @@ export default async function PartnerSchoolsPage({ searchParams }: {
     </form>
     <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       {schools.length === 0 ? <p className="p-10 text-center text-slate-600">No partner schools match these filters.</p> :
-        <table className="w-full min-w-[700px] text-left text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="px-5 py-4">School</th><th className="px-5 py-4">Location</th><th className="px-5 py-4">Type</th><th className="px-5 py-4">Board</th><th className="px-5 py-4">Classes</th><th className="px-5 py-4">Referrals</th>{canManage && <th className="px-5 py-4">Actions</th>}</tr></thead>
-          <tbody>{schools.map((school) => <tr key={school.id} className="border-t border-slate-100"><td className="px-5 py-4 font-semibold">{school.name}</td><td className="px-5 py-4">{[school.city, school.state].filter(Boolean).join(", ") || "Pending"}</td><td className="px-5 py-4 capitalize">{school.school_type}</td><td className="px-5 py-4">{school.board || "Pending"}</td><td className="px-5 py-4">{school.classes_offered || "Pending"}</td><td className="px-5 py-4">{school.referral_count}</td>{canManage && <td className="px-5 py-4"><SchoolActions id={school.id} name={school.name} active={Boolean(school.is_active)} /></td>}</tr>)}</tbody></table>}
+        <table className="w-full min-w-[700px] text-left text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="px-5 py-4">School</th><th className="px-5 py-4">Location</th><th className="px-5 py-4">Type</th><th className="px-5 py-4">Board</th><th className="px-5 py-4">Classes</th><th className="px-5 py-4">Referrals</th></tr></thead>
+          <tbody>{schools.map((school) => <tr key={school.id} className="border-t border-slate-100"><td className="px-5 py-4 font-semibold">{school.name}</td><td className="px-5 py-4">{[school.city, school.state].filter(Boolean).join(", ") || "Pending"}</td><td className="px-5 py-4 capitalize">{school.school_type}</td><td className="px-5 py-4">{school.board || "Pending"}</td><td className="px-5 py-4">{school.classes_offered || "Pending"}</td><td className="px-5 py-4">{school.referral_count}</td></tr>)}</tbody></table>}
     </div>
   </div></main>;
 }
