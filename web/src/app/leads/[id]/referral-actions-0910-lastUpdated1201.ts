@@ -60,7 +60,7 @@ export async function shortlistSchool(leadId: number, schoolId: number, form: Fo
     throw error;
   } finally { connection.release(); }
   refresh(leadId);
-  redirect(`/leads/${leadId}?tab=schools&referralSaved=1`);
+  redirect(`/leads/${leadId}?referralSaved=1`);
 }
 
 export async function updateReferral(leadId: number, referralId: number, form: FormData) {
@@ -165,7 +165,7 @@ export async function updateReferral(leadId: number, referralId: number, form: F
   } finally { connection.release(); }
   refresh(leadId);
   revalidatePath("/leads");
-  redirect(`/leads/${leadId}?tab=schools&referralSaved=1`);
+  redirect(`/leads/${leadId}?referralSaved=1`);
 }
 
 export async function shortlistSchools(leadId: number, _previous: { message: string }, form: FormData) {
@@ -206,5 +206,5 @@ export async function shortlistSchools(leadId: number, _previous: { message: str
     throw error;
   } finally { connection.release(); }
   refresh(leadId);
-  redirect(`/leads/${leadId}?tab=schools&referralSaved=1#referrals`);
+  redirect(`/leads/${leadId}?referralSaved=1#referrals`);
 }

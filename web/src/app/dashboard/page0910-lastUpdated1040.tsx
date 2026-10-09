@@ -27,7 +27,7 @@ export default async function DashboardPage() {
           <Link href="/my-day" className="inline-block rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800">My Day</Link>
           <Link href="/leads" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Open Lead Inbox</Link>
           <Link href="/partner-schools" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Partner schools</Link>
-          {["admin", "manager"].includes(user.role) && <Link href="/team" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Team</Link>}
+          {user.role === "admin" && <Link href="/team" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Team</Link>}
         </div>
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
           <section className="rounded-xl border border-slate-200 bg-white p-6"><p className="text-sm text-slate-600">Open leads {user.role === "counsellor" ? "assigned to you" : "across the team"}</p><p className="mt-2 text-4xl font-bold">{count?.total ?? 0}</p></section>
