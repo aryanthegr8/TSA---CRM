@@ -3,9 +3,9 @@ import { notFound, redirect } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
-import SchoolSelection from "./school-selection";
+import { shortlistSchool } from "../referral-actions";
 
-type Lead = RowDataPacket & { parent_name: string | null; primary_phone: string; student_name: string | null; class_sought: string | null; admission_year: number | null; board_preference: string | null; budget_min_inr: number | null; budget_max_inr: number | null; school_type: string; preferred_location: string | null; status: string; enquiry_category: string };
+type Lead = RowDataPacket & { school_type: string; preferred_location: string | null; status: string; enquiry_category: string };
 type School = RowDataPacket & { id: number; name: string; school_type: string; city: string | null; state: string | null; board: string | null; classes_offered: string | null; referral_id: number | null };
 export default async function FindSchools({ params, searchParams }: {
   params: Promise<{ id: string }>;
@@ -16,7 +16,7 @@ export default async function FindSchools({ params, searchParams }: {
   const id = Number((await params).id);
   if (!Number.isSafeInteger(id) || id <= 0) notFound();
   const [leads] = await db.execute<Lead[]>(
-    `SELECT l.school_type, l.preferred_location, l.status, l.enquiry_category, l.student_name, l.class_sought, l.admission_year, l.board_preference, l.budget_min_inr, l.budget_max_inr, f.parent_name, f.primary_phone FROM leads l JOIN families f ON f.id = l.family_id WHERE l.id = ? ${user.role === "counsellor" ? "AND l.owner_id = ?" : ""} LIMIT 1`,
+    `SELECT school_type, preferred_location, status, enquiry_category FROM leads WHERE id = ? ${user.role === "counsellor" ? "AND owner_id = ?" : ""} LIMIT 1`,
     user.role === "counsellor" ? [id, user.id] : [id]
   );
   const lead = leads[0];
@@ -41,20 +41,14 @@ export default async function FindSchools({ params, searchParams }: {
   );
   return <main className="min-h-screen bg-slate-50 px-5 py-9 text-slate-900"><div className="mx-auto max-w-5xl">
     <Link href={`/leads/${id}`} className="text-sm text-blue-700 hover:underline">← Lead details</Link>
-    <h1 className="mt-3 text-3xl font-bold">Select suitable partner schools</h1>
+    <h1 className="mt-3 text-3xl font-bold">Assign a partner school</h1>
     <p className="mt-2 text-slate-600">{lead.school_type === "undecided" ? "All active partners" : `${lead.school_type} schools`} · Preferred location: {lead.preferred_location || "not confirmed"}. Shortlisting stays internal.</p>
     {error && <p role="alert" className="mt-5 rounded-lg bg-red-50 p-3 text-red-700">Check the reason and try again.</p>}
     <form action={`/leads/${id}/refer`} className="mt-6 flex gap-3"><input name="q" defaultValue={q} placeholder="Search school, city, state" maxLength={100} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" /><button className="rounded-lg border border-slate-300 px-4 py-2 font-medium">Search</button></form>
-    <SchoolSelection key={q} leadId={id} schools={schools.map(school => ({ id: school.id, name: school.name, school_type: school.school_type, city: school.city, state: school.state, board: school.board, classes_offered: school.classes_offered, referral_id: school.referral_id }))} message={[
-      "Admission enquiry — The School Admission", `CRM lead reference: ${id}`,
-      `Parent: ${lead.parent_name || "Not recorded"}`, `Phone: ${lead.primary_phone}`,
-      `Student: ${lead.student_name || "Not recorded"}`, `Class: ${lead.class_sought || "To confirm"}`,
-      `Admission year: ${lead.admission_year || "To confirm"}`, `School type: ${lead.school_type}`,
-      `Preferred location: ${lead.preferred_location || "To confirm"}`, `Board: ${lead.board_preference || "To confirm"}`,
-      `Annual budget (INR): ${lead.budget_min_inr ?? "To confirm"} – ${lead.budget_max_inr ?? "To confirm"}`,
-      "Please contact the parent regarding suitable admission options and share an update with our counsellor.",
-    ].join("\n")} />
-    {!schools.length && <p className="mt-5 text-slate-600">No matching active schools. Try another search.</p>}
-
+    <div className="mt-6 grid gap-4">{schools.length ? schools.map((school) => <section key={school.id} className="rounded-xl border border-slate-200 bg-white p-5">
+      <div className="flex flex-wrap justify-between gap-3"><div><h2 className="text-lg font-semibold">{school.name}</h2><p className="mt-1 text-sm text-slate-600">{[school.city, school.state].filter(Boolean).join(", ") || "Location pending"} · {school.school_type} · {school.board || "Board pending"} · {school.classes_offered || "Classes pending"}</p></div>
+      {school.referral_id ? <span className="text-sm font-medium text-green-700">Already shortlisted</span> : null}</div>
+      {!school.referral_id && <form action={shortlistSchool.bind(null, id, school.id)} className="mt-4 flex flex-wrap gap-3"><input name="reason" maxLength={1000} placeholder="Reason for match (optional)" className="min-w-56 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" /><button className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white">Shortlist school</button></form>}
+    </section>) : <p className="rounded-xl bg-white p-8 text-center text-slate-600">No matching active partner schools. Try another search.</p>}</div>
   </div></main>;
 }

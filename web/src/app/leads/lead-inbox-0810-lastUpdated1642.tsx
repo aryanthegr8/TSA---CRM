@@ -1,5 +1,4 @@
 import Link from "next/link";
-import BulkAssignmentForm from "./bulk-assignment-form";
 import { redirect } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
@@ -14,7 +13,7 @@ interface LeadRow extends RowDataPacket {
   enquiry_category: string; source_detail: string | null; school_progress: string | null;
 }
 interface CountRow extends RowDataPacket { total: number }
-interface OwnerRow extends RowDataPacket { id: number; name: string; role: string }
+interface OwnerRow extends RowDataPacket { id: number; name: string }
 type Filters = { q?: string | string[]; status?: string | string[]; source?: string | string[]; owner?: string | string[]; page?: string | string[] };
 const stages = ["new", "attempting_contact", "connected", "qualified", "exploring_options", "application_in_progress", "admitted", "on_hold", "lost"];
 const sources = ["website", "meta_form", "whatsapp", "phone", "referral", "walk_in", "other"];
@@ -25,7 +24,6 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const isCounsellor = user.role === "counsellor";
-  const canAssign = user.role === "admin" || user.role === "manager";
   const raw = await searchParams;
   const q = value(raw.q).trim().slice(0, 100);
   const status = stages.includes(value(raw.status)) ? value(raw.status) : "";
@@ -53,7 +51,7 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
   const from = `FROM leads l JOIN families f ON f.id = l.family_id LEFT JOIN crm_users u ON u.id = l.owner_id ${condition}`;
   const [[counts], [owners]] = await Promise.all([
     db.execute<CountRow[]>(`SELECT COUNT(*) AS total ${from}`, args),
-    isCounsellor ? Promise.resolve([[] as OwnerRow[]]) : db.query<OwnerRow[]>("SELECT id, name, role FROM crm_users WHERE is_active = 1 ORDER BY name"),
+    isCounsellor ? Promise.resolve([[] as OwnerRow[]]) : db.query<OwnerRow[]>("SELECT id, name FROM crm_users WHERE is_active = 1 ORDER BY name"),
   ]);
   const total = counts[0]?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -77,29 +75,6 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
     return `${basePath}?${params.toString()}`;
   };
 
-  const leadTable = (
-<div className="mt-8 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          {leads.length === 0 ? <p className="p-10 text-center text-slate-600">No enquiries match these filters.</p> :
-            <table className="w-full min-w-[800px] text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-100 text-slate-600"><tr>
-                {canAssign && <th className="px-3 py-4">Select</th>}<th className="px-5 py-4">Contact and student</th><th className="px-5 py-4">Enquiry category</th><th className="px-5 py-4">Requirement and schools</th>
-                <th className="px-5 py-4">Source</th><th className="px-5 py-4">Stage</th>
-                <th className="px-5 py-4">Owner</th><th className="px-5 py-4">Next follow-up</th>
-              </tr></thead>
-              <tbody>{leads.map((lead) => <tr key={lead.id} className="border-b border-slate-100 last:border-0">
-                {canAssign && <td className="px-3 py-4"><input type="checkbox" name="leadId" value={lead.id} aria-label={`Select lead ${lead.id}: ${lead.parent_name || "Contact not recorded"}`} /></td>}<td className="px-5 py-4"><Link href={`/leads/${lead.id}`} className="font-semibold text-blue-700 hover:underline">{lead.parent_name || "Contact not recorded"}</Link>
-                  <div className="text-slate-600">{lead.enquiry_category !== "school_owner" && <>{lead.student_name || "Student not recorded"} · </>}{lead.primary_phone}</div></td>
-                <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${lead.enquiry_category === "school_owner" ? "bg-purple-100 text-purple-800" : lead.enquiry_category === "boarding_parent" ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-700"}`}>{categoryLabel(lead.enquiry_category)}</span></td>
-                <td className="px-5 py-4">{lead.enquiry_category === "school_owner" ? "School partnership" : <>{lead.school_type} · {lead.class_sought || "Class pending"}</>}<div className="text-slate-600">{lead.preferred_location || "Location pending"}</div>{inbox !== "school_owner" && <div className="mt-2 text-xs text-blue-800">{lead.school_progress || "No school assigned yet"}</div>}</td>
-                <td className="px-5 py-4"><span className="capitalize">{lead.source.replaceAll("_", " ")}</span><div className="mt-1 text-xs text-slate-500">{lead.source_detail}</div></td>
-                <td className="px-5 py-4 capitalize">{lead.status.replaceAll("_", " ")}</td>
-                <td className="px-5 py-4">{lead.owner_name || "Unassigned"}</td>
-                <td className="px-5 py-4">{lead.due_at ? new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(lead.due_at)) : "Not set"}</td>
-              </tr>)}</tbody>
-            </table>}
-        </div>
-  );
-
   return (
     <main className="min-h-screen bg-slate-50 px-5 py-9 text-slate-900">
       <div className="mx-auto max-w-6xl">
@@ -119,7 +94,26 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
           <div className="flex items-end gap-3"><button className="rounded-lg bg-blue-700 px-4 py-2 font-medium text-white hover:bg-blue-800">Apply</button><Link href={basePath} className="py-2 text-sm text-blue-700 hover:underline">Clear</Link></div>
         </form>
         <p className="mt-4 text-sm text-slate-600">{total} matching {total === 1 ? "lead" : "leads"} · Page {currentPage} of {pages}</p>
-        {canAssign ? <BulkAssignmentForm key={pageLink(currentPage)} category={inbox} counsellors={owners.filter(member => member.role === "counsellor").map(({ id, name }) => ({ id, name }))}>{leadTable}</BulkAssignmentForm> : leadTable}
+        <div className="mt-8 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          {leads.length === 0 ? <p className="p-10 text-center text-slate-600">No enquiries match these filters.</p> :
+            <table className="w-full min-w-[800px] text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-100 text-slate-600"><tr>
+                <th className="px-5 py-4">Contact and student</th><th className="px-5 py-4">Enquiry category</th><th className="px-5 py-4">Requirement and schools</th>
+                <th className="px-5 py-4">Source</th><th className="px-5 py-4">Stage</th>
+                <th className="px-5 py-4">Owner</th><th className="px-5 py-4">Next follow-up</th>
+              </tr></thead>
+              <tbody>{leads.map((lead) => <tr key={lead.id} className="border-b border-slate-100 last:border-0">
+                <td className="px-5 py-4"><Link href={`/leads/${lead.id}`} className="font-semibold text-blue-700 hover:underline">{lead.parent_name || "Contact not recorded"}</Link>
+                  <div className="text-slate-600">{lead.enquiry_category !== "school_owner" && <>{lead.student_name || "Student not recorded"} · </>}{lead.primary_phone}</div></td>
+                <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${lead.enquiry_category === "school_owner" ? "bg-purple-100 text-purple-800" : lead.enquiry_category === "boarding_parent" ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-700"}`}>{categoryLabel(lead.enquiry_category)}</span></td>
+                <td className="px-5 py-4">{lead.enquiry_category === "school_owner" ? "School partnership" : <>{lead.school_type} · {lead.class_sought || "Class pending"}</>}<div className="text-slate-600">{lead.preferred_location || "Location pending"}</div>{inbox !== "school_owner" && <div className="mt-2 text-xs text-blue-800">{lead.school_progress || "No school assigned yet"}</div>}</td>
+                <td className="px-5 py-4"><span className="capitalize">{lead.source.replaceAll("_", " ")}</span><div className="mt-1 text-xs text-slate-500">{lead.source_detail}</div></td>
+                <td className="px-5 py-4 capitalize">{lead.status.replaceAll("_", " ")}</td>
+                <td className="px-5 py-4">{lead.owner_name || "Unassigned"}</td>
+                <td className="px-5 py-4">{lead.due_at ? new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(lead.due_at)) : "Not set"}</td>
+              </tr>)}</tbody>
+            </table>}
+        </div>
         {pages > 1 && <nav aria-label="Lead pages" className="mt-5 flex items-center justify-between text-sm">
           {currentPage > 1 ? <Link href={pageLink(currentPage - 1)} className="text-blue-700 hover:underline">← Previous</Link> : <span />}
           <span className="text-slate-600">Page {currentPage} of {pages}</span>

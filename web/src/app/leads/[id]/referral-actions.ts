@@ -167,3 +167,44 @@ export async function updateReferral(leadId: number, referralId: number, form: F
   revalidatePath("/leads");
   redirect(`/leads/${leadId}?referralSaved=1`);
 }
+
+export async function shortlistSchools(leadId: number, _previous: { message: string }, form: FormData) {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+  const raw = form.getAll("schoolId");
+  const ids = [...new Set(raw.map(Number))].sort((a, b) => a - b);
+  const reason = String(form.get("reason") ?? "").trim();
+  if (!allowedId(leadId) || !ids.length || raw.length > 100 || ids.some(id => !allowedId(id)) || reason.length > 1000) {
+    return { message: "Select up to 100 schools and keep the match reason within 1,000 characters." };
+  }
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const lead = await leadAccess(leadId, user.id, user.role, connection);
+    const [schools] = await connection.execute<(SchoolRow & { id: number })[]>(
+      `SELECT id, school_type FROM partner_schools WHERE id IN (${ids.map(() => "?").join(",")}) AND is_active = 1 ORDER BY id FOR UPDATE`, ids
+    );
+    if (schools.length !== ids.length || schools.some(school => lead.school_type !== "undecided" && school.school_type !== "both" && school.school_type !== lead.school_type)) {
+      await connection.rollback();
+      return { message: "Some schools are no longer active or do not match the lead’s school type. Refresh and select again." };
+    }
+    for (const school of schools) {
+      const [existing] = await connection.execute<ReferralRow[]>("SELECT id FROM referrals WHERE lead_id = ? AND partner_school_id = ?", [leadId, school.id]);
+      if (existing.length) continue;
+      const [result] = await connection.execute<ResultSetHeader>(
+        "INSERT INTO referrals (lead_id, partner_school_id, counsellor_id, reason_for_match) VALUES (?, ?, ?, ?)",
+        [leadId, school.id, user.id, reason || null]
+      );
+      await connection.execute(
+        "INSERT INTO lead_activities (lead_id, referral_id, actor_id, activity_type, outcome, note, occurred_at) VALUES (?, ?, ?, 'referral_update', 'shortlisted', 'School shortlisted in multiple-school selection', UTC_TIMESTAMP(3))",
+        [leadId, result.insertId, user.id]
+      );
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally { connection.release(); }
+  refresh(leadId);
+  redirect(`/leads/${leadId}?referralSaved=1#referrals`);
+}
