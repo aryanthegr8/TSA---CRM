@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { preferredSchoolSql } from "@/lib/lead-stage";
 import ReferralUpdateForm from "./referral-update-form";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
@@ -12,7 +13,7 @@ const stamp = (date: Date) => new Intl.DateTimeFormat("en-IN", { dateStyle: "med
 export default async function ReferralsSection({ leadId, active, error, saved }: { leadId: number; active: boolean; error?: string; saved?: string }) {
   const [[referrals], [contacts]] = await Promise.all([
     db.execute<Referral[]>(`SELECT r.id, r.partner_school_id, r.status, r.reason_for_match, r.school_response, r.closed_reason,
-      (SELECT COUNT(*) FROM lead_activities a WHERE a.referral_id = r.id AND a.outcome = 'parent_selected') AS parent_selected, r.sent_at, r.school_contact_id, r.transfer_channel, r.transfer_recipient, r.visit_scheduled_at, r.visited_at, sender.name AS sent_by_name, ps.name, ps.city, ps.state,
+      ${preferredSchoolSql("r")} = r.id AS parent_selected, r.sent_at, r.school_contact_id, r.transfer_channel, r.transfer_recipient, r.visit_scheduled_at, r.visited_at, sender.name AS sent_by_name, ps.name, ps.city, ps.state,
       (SELECT MIN(t.due_at) FROM tasks t WHERE t.referral_id = r.id AND t.completed_at IS NULL) AS due_at
       FROM referrals r JOIN partner_schools ps ON ps.id = r.partner_school_id LEFT JOIN crm_users sender ON sender.id = r.sent_by_user_id
       WHERE r.lead_id = ? ORDER BY r.created_at DESC, r.id DESC`, [leadId]),
@@ -21,7 +22,7 @@ export default async function ReferralsSection({ leadId, active, error, saved }:
       WHERE r.lead_id = ? AND c.is_active = 1 ORDER BY c.is_primary DESC, c.name`, [leadId]),
   ]);
   return <section id="referrals" className="mt-7 scroll-mt-6 rounded-xl border border-slate-200 bg-white p-6">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">School referrals</h2><p className="mt-1 text-sm text-slate-600">Track each school separately. Open a row to record sharing, visits or admission.</p></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">School referrals</h2><p className="mt-1 text-sm text-slate-600">Track each school separately. Open a row for school updates. Record visits and admission in the Follow-up tab.</p></div>
       {active && <Link href={`/leads/${leadId}/refer`} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">Add schools</Link>}
       {active && <Link href={`/leads/${leadId}/refer`} className="rounded-lg border border-blue-700 px-4 py-2 text-sm font-medium text-blue-700">Prepare WhatsApp message</Link>}
     </div>
@@ -30,7 +31,7 @@ export default async function ReferralsSection({ leadId, active, error, saved }:
     {referrals.filter(ref => (ref.parent_selected > 0 || ref.status === "admitted") && ref.status !== "not_proceeding").map(ref => <div key={ref.id} className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4"><p className="text-xs font-semibold uppercase text-green-700">{ref.status === "admitted" ? "Admission confirmed" : "Chosen school"}</p><p className="mt-1 font-semibold">{ref.name}</p><p className="mt-1 text-sm text-green-800">{label(ref.status)}{ref.due_at ? ` · Next follow-up ${stamp(ref.due_at)}` : ""}</p></div>)}
     {referrals.some(ref => ref.status === "not_proceeding") && <details className="mt-4 rounded-xl border p-4"><summary className="cursor-pointer text-sm font-medium text-slate-500">Previous options ({referrals.filter(ref => ref.status === "not_proceeding").length})</summary><ul className="mt-3 space-y-2">{referrals.filter(ref => ref.status === "not_proceeding").map(ref => <li key={ref.id} className="text-sm"><strong>{ref.name}</strong><span className="ml-2 text-slate-500">{ref.closed_reason || "Not proceeding"}</span></li>)}</ul></details>}
     {referrals.length === 0 ? <p className="mt-5 text-sm text-slate-600">No schools shortlisted yet.</p> : <div className="mt-5 grid gap-4">{referrals.filter(ref => ref.status !== "not_proceeding").map((referral) => {
-      const choices = next[referral.status] || [];
+      const choices = (next[referral.status] || []).filter(stage => !["visit_scheduled","school_visited","admitted"].includes(stage));
       const schoolContacts = contacts.filter((contact) => contact.partner_school_id === referral.partner_school_id);
       return <details key={referral.id} className="rounded-xl border border-slate-200 bg-white p-4">
         <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3"><div><span className="font-semibold">{referral.name}</span><span className="mt-1 block text-xs text-slate-500">{label(referral.status)} · {referral.due_at ? `Follow-up: ${stamp(referral.due_at)}` : "No follow-up scheduled"}</span></div><span className="text-sm font-semibold text-blue-700">{active && choices.length ? "Update" : "View"} ↓</span></summary>

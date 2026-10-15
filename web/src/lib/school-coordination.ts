@@ -1,0 +1,2 @@
+export const schoolContactOutcomes = { pending: "School call pending", parent_contacted: "Parent contacted", unreachable: "Parent unreachable", declined: "School declined", seats_unavailable: "Seats unavailable" };
+export const parentDecisions = { awaiting_discussion: "Awaiting discussion", comparing: "Comparing options", interested: "Interested", visit_requested: "Visit requested", budget_concern: "Budget concern", callback_required: "Callback required", not_interested: "Not interested in this school" };

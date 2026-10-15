@@ -27,6 +27,8 @@ export default async function DashboardPage() {
           <Link href="/my-day" className="inline-block rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800">My Day</Link>
           <Link href="/leads" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Open Lead Inbox</Link>
           <Link href="/partner-schools" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Partner schools</Link>
+          <Link href="/visits" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium">School visits</Link>
+          <Link href="/conversions" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium">Confirmed admissions</Link>
           {["admin", "manager"].includes(user.role) && <Link href="/team" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Team</Link>}
         </div>
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
