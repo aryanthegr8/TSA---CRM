@@ -10,7 +10,7 @@ import { getCurrentUser } from "@/lib/current-user";
 import { categoryLabel } from "@/lib/lead-categories";
 
 interface LeadRow extends RowDataPacket {
-  partnership_stage: PartnershipStage; school_name: string | null; contact_name: string | null; contact_phone: string | null; school_city: string | null; workflow_stage: ParentStage; last_outcome: string | null; next_action: string | null; id: number; parent_name: string | null; student_name: string | null;
+  partnership_stage: PartnershipStage; school_name: string | null; contact_name: string | null; contact_phone: string | null; school_city: string | null; owner_school_type: string; workflow_stage: ParentStage; last_outcome: string | null; next_action: string | null; id: number; parent_name: string | null; student_name: string | null;
   primary_phone: string; class_sought: string | null; school_type: string;
   preferred_location: string | null; source: string; status: string;
   received_at: Date; owner_name: string | null; due_at: Date | null;
@@ -18,7 +18,7 @@ interface LeadRow extends RowDataPacket {
 }
 interface CountRow extends RowDataPacket { total: number }
 interface OwnerRow extends RowDataPacket { id: number; name: string; role: string }
-type Filters = { partnership?: string | string[]; workflow?: string | string[]; work?: string | string[]; q?: string | string[]; status?: string | string[]; source?: string | string[]; owner?: string | string[]; page?: string | string[] };
+type Filters = { schoolType?: string | string[]; partnership?: string | string[]; workflow?: string | string[]; work?: string | string[]; q?: string | string[]; status?: string | string[]; source?: string | string[]; owner?: string | string[]; page?: string | string[] };
 const stages = ["new", "attempting_contact", "connected", "qualified", "exploring_options", "application_in_progress", "admitted", "on_hold", "lost"];
 const sources = ["website", "meta_form", "whatsapp", "phone", "referral", "walk_in", "other"];
 const value = (input: string | string[] | undefined) => typeof input === "string" ? input : "";
@@ -34,11 +34,12 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
   const status = stages.includes(value(raw.status)) ? value(raw.status) : "";
   const source = sources.includes(value(raw.source)) ? value(raw.source) : "";
   const category = inbox;
+  const schoolType = inbox === "school_owner" && ["day","boarding","both"].includes(value(raw.schoolType)) ? value(raw.schoolType) : "";
   const partnership = inbox === "school_owner" && Object.hasOwn(partnershipStages,value(raw.partnership)) ? value(raw.partnership) : "";
   const workflow = inbox !== "school_owner" && Object.hasOwn(parentStageLabels,value(raw.workflow)) ? value(raw.workflow) : "";
   const work = ["overdue","no_next","visits","converted","unassigned"].includes(value(raw.work)) ? value(raw.work) : "";
   const basePath = inbox === "boarding_parent" ? "/leads/boarding-parents" : inbox === "school_owner" ? "/leads/school-owners" : "/leads";
-  const title = inbox === "boarding_parent" ? "Boarding Parent Leads" : inbox === "school_owner" ? "Residential School Owner Leads" : "Lead Workspaces";
+  const title = inbox === "boarding_parent" ? "Boarding Parent Leads" : inbox === "school_owner" ? "School Owner Leads" : "Lead Workspaces";
   const owner = !isCounsellor && (value(raw.owner) === "unassigned" || /^\d+$/.test(value(raw.owner))) ? value(raw.owner) : "";
   const requestedPage = Number(value(raw.page));
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -50,6 +51,7 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
     where.push("(f.parent_name LIKE ? OR f.primary_phone LIKE ? OR l.student_name LIKE ? OR sp.school_name LIKE ? OR sp.contact_name LIKE ? OR sp.city LIKE ?)");
     args.push(term, term, term, term, term, term);
   }
+  if (schoolType) { where.push("COALESCE(sp.school_type,NULLIF(l.school_type,'undecided'),'boarding') = ?"); args.push(schoolType); }
   if (partnership) { where.push("COALESCE(sp.stage, CASE WHEN l.status='lost' THEN 'closed' ELSE 'new' END) = ?"); args.push(partnership); }
   if (status) { where.push("l.status = ?"); args.push(status); }
   if (source) { where.push("l.source = ?"); args.push(source); }
@@ -74,7 +76,7 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
   const offset = (currentPage - 1) * pageSize;
   const sql = `SELECT l.id, f.parent_name, f.primary_phone, l.student_name, l.class_sought,
     l.school_type, l.preferred_location, l.source, l.source_detail, l.enquiry_category, l.status, l.received_at,
-    COALESCE(sp.stage, CASE WHEN l.status='lost' THEN 'closed' ELSE 'new' END) AS partnership_stage,sp.school_name,sp.contact_name,sp.contact_phone,sp.city AS school_city,
+    COALESCE(sp.stage, CASE WHEN l.status='lost' THEN 'closed' ELSE 'new' END) AS partnership_stage,COALESCE(sp.school_type,NULLIF(l.school_type,'undecided'),'boarding') AS owner_school_type,sp.school_name,sp.contact_name,sp.contact_phone,sp.city AS school_city,
     u.name AS owner_name, ${parentStageSql()} AS workflow_stage,
     (SELECT la.outcome FROM lead_activities la WHERE la.lead_id=l.id AND la.activity_type IN ('call','whatsapp','email') ORDER BY la.occurred_at DESC,la.id DESC LIMIT 1) AS last_outcome,
     (SELECT nt.title FROM tasks nt WHERE nt.lead_id=l.id AND nt.completed_at IS NULL ORDER BY nt.due_at,nt.id LIMIT 1) AS next_action,
@@ -88,6 +90,7 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
     if (status) params.set("status", status);
     if (source) params.set("source", source);
 
+    if (schoolType) params.set("schoolType",schoolType);
     if (partnership) params.set("partnership",partnership);
     if (workflow) params.set("workflow",workflow);
     if (work) params.set("work",work);
@@ -109,7 +112,7 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
                 {canAssign && <td className="px-3 py-4"><input type="checkbox" name="leadId" value={lead.id} aria-label={`Select lead ${lead.id}: ${lead.parent_name || "Contact not recorded"}`} /></td>}<td className="px-5 py-4"><Link href={`/leads/${lead.id}`} className="font-semibold text-blue-700 hover:underline">{lead.enquiry_category === "school_owner" ? lead.school_name || "School name to confirm" : lead.parent_name || "Contact not recorded"}</Link>
                   <div className="text-slate-600">{lead.enquiry_category !== "school_owner" && <>{lead.student_name || "Student not recorded"} · </>}{lead.enquiry_category === "school_owner" ? `${lead.contact_name || lead.parent_name || "Contact pending"} · ${lead.contact_phone || lead.primary_phone}` : lead.primary_phone}</div></td>
                 <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${lead.enquiry_category === "school_owner" ? "bg-purple-100 text-purple-800" : lead.enquiry_category === "boarding_parent" ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-700"}`}>{categoryLabel(lead.enquiry_category)}</span></td>
-                <td className="px-5 py-4">{lead.enquiry_category === "school_owner" ? "School partnership" : <>{lead.school_type} · {lead.class_sought || "Class pending"}</>}<div className="text-slate-600">{lead.school_city || lead.preferred_location || "Location pending"}</div>{inbox !== "school_owner" && <div className="mt-2 line-clamp-2 text-xs text-blue-800">{lead.school_progress || "No school assigned yet"}</div>}</td>
+                <td className="px-5 py-4">{lead.enquiry_category === "school_owner" ? `School partnership · ${lead.owner_school_type}` : <>{lead.school_type} · {lead.class_sought || "Class pending"}</>}<div className="text-slate-600">{lead.school_city || lead.preferred_location || "Location pending"}</div>{inbox !== "school_owner" && <div className="mt-2 line-clamp-2 text-xs text-blue-800">{lead.school_progress || "No school assigned yet"}</div>}</td>
                 <td className="px-5 py-4"><span className="capitalize">{lead.source.replaceAll("_", " ")}</span><div className="mt-1 text-xs text-slate-500">{lead.source_detail}</div></td>
                 <td className="px-5 py-4"><p className="font-medium">{lead.enquiry_category === "school_owner" ? partnershipStages[lead.partnership_stage] : parentStageLabels[lead.workflow_stage]}</p><p className="mt-1 text-xs text-slate-500">{lead.last_outcome || "No contact recorded"}</p>{["on_hold","lost","admitted"].includes(lead.status) && <p className="mt-1 text-xs capitalize text-blue-700">{lead.status.replaceAll("_", " ")}</p>}</td>
                 <td className="px-5 py-4">{lead.owner_name || "Unassigned"}</td>
@@ -135,6 +138,7 @@ export default async function LeadInbox({ searchParams, inbox }: { searchParams:
           {inbox !== "school_owner" && <label className="text-sm font-medium">Stage<select name="status" defaultValue={status} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"><option value="">All stages</option>{stages.map((stage) => <option key={stage} value={stage}>{stage.replaceAll("_", " ")}</option>)}</select></label>}
           <label className="text-sm font-medium">Source<select name="source" defaultValue={source} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"><option value="">All sources</option>{sources.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></label>
           {!isCounsellor && <label className="text-sm font-medium">Owner<select name="owner" defaultValue={owner} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"><option value="">All owners</option><option value="unassigned">Unassigned</option>{owners.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>}
+          {inbox === "school_owner" && <label className="text-sm font-medium">School type<select name="schoolType" defaultValue={schoolType} className="mt-1 w-full rounded-lg border bg-white px-3 py-2"><option value="">All types</option><option value="day">Day</option><option value="boarding">Boarding</option><option value="both">Both</option></select></label>}
           {inbox === "school_owner" && <label className="text-sm font-medium">Partnership stage<select name="partnership" defaultValue={partnership} className="mt-1 w-full rounded-lg border bg-white px-3 py-2"><option value="">All partnership stages</option>{Object.entries(partnershipStages).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>}
           {inbox !== "school_owner" && <label className="text-sm font-medium">Workflow stage<select name="workflow" defaultValue={workflow} className="mt-1 w-full rounded-lg border bg-white px-3 py-2"><option value="">All workflow stages</option>{Object.entries(parentStageLabels).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>}
           <label className="text-sm font-medium">Needs attention<select name="work" defaultValue={work} className="mt-1 w-full rounded-lg border bg-white px-3 py-2"><option value="">All leads</option><option value="unassigned">Unassigned</option><option value="overdue">Overdue follow-ups</option><option value="no_next">No next action</option>{inbox !== "school_owner" && <><option value="visits">Visits scheduled</option><option value="converted">Converted</option></>}</select></label>

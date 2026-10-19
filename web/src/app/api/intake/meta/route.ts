@@ -113,14 +113,21 @@ async function saveLead(leadId: string, pageToken: string, version: string, even
     const [lead] = await connection.execute<ResultSetHeader>(
       `INSERT INTO leads (family_id, student_name, class_sought, school_type, preferred_location,
        source, source_detail, enquiry_category, campaign_data, external_source_id, owner_id, received_at)
-       VALUES (?, ?, ?, 'undecided', ?, 'meta_form', ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))`,
-      [family.insertId, student || null, classSought || null, location || null,
+       VALUES (?, ?, ?, ?, ?, 'meta_form', ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))`,
+      [family.insertId, student || null, classSought || null, form?.schoolType ?? "undecided", location || null,
         form?.name ?? (formId ? `Form ${formId}` : "Meta Lead Ads"), category,
         JSON.stringify({ formId, adId: data.ad_id ?? null }), leadId, staff[0].id]
     );
+    if (category === "school_owner") {
+      const schoolName = firstAnswer(fields, "school_name", "name_of_school", "name_of_the_school").slice(0,255);
+      await connection.execute(
+        "INSERT INTO school_partnerships (lead_id,school_name,school_type,contact_name,contact_phone,contact_email) VALUES (?,?,?,?,?,?)",
+        [lead.insertId,schoolName||null,form?.schoolType ?? "boarding",parent.slice(0,160),phone,email||null]
+      );
+    }
     await connection.execute(
-      "INSERT INTO tasks (lead_id, owner_id, title, task_type, due_at) VALUES (?, ?, 'Contact Meta enquiry', 'call_parent', DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 2 HOUR))",
-      [lead.insertId, staff[0].id]
+      "INSERT INTO tasks (lead_id, owner_id, title, task_type, due_at) VALUES (?, ?, ?, ?, DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 2 HOUR))",
+      [lead.insertId, staff[0].id, category === "school_owner" ? "Contact school about partnership" : "Contact Meta enquiry", category === "school_owner" ? "contact_school" : "call_parent"]
     );
     await connection.execute(
       "INSERT INTO lead_activities (lead_id, activity_type, note, occurred_at) VALUES (?, 'system', ?, UTC_TIMESTAMP(3))",

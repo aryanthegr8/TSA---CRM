@@ -1,0 +1,153 @@
+import Link from "next/link";
+import { partnershipStages, type PartnershipStage } from "@/lib/school-partnership";
+import { parentStageSql } from "@/lib/lead-stage";
+import { parentStageLabels, type ParentStage } from "@/lib/parent-workflow";
+import BulkAssignmentForm from "./bulk-assignment-form";
+import { redirect } from "next/navigation";
+import type { RowDataPacket } from "mysql2";
+import { db } from "@/lib/db";
+import { getCurrentUser } from "@/lib/current-user";
+import { categoryLabel } from "@/lib/lead-categories";
+
+interface LeadRow extends RowDataPacket {
+  partnership_stage: PartnershipStage; school_name: string | null; contact_name: string | null; contact_phone: string | null; school_city: string | null; workflow_stage: ParentStage; last_outcome: string | null; next_action: string | null; id: number; parent_name: string | null; student_name: string | null;
+  primary_phone: string; class_sought: string | null; school_type: string;
+  preferred_location: string | null; source: string; status: string;
+  received_at: Date; owner_name: string | null; due_at: Date | null;
+  enquiry_category: string; source_detail: string | null; school_progress: string | null;
+}
+interface CountRow extends RowDataPacket { total: number }
+interface OwnerRow extends RowDataPacket { id: number; name: string; role: string }
+type Filters = { partnership?: string | string[]; workflow?: string | string[]; work?: string | string[]; q?: string | string[]; status?: string | string[]; source?: string | string[]; owner?: string | string[]; page?: string | string[] };
+const stages = ["new", "attempting_contact", "connected", "qualified", "exploring_options", "application_in_progress", "admitted", "on_hold", "lost"];
+const sources = ["website", "meta_form", "whatsapp", "phone", "referral", "walk_in", "other"];
+const value = (input: string | string[] | undefined) => typeof input === "string" ? input : "";
+const pageSize = 50;
+
+export default async function LeadInbox({ searchParams, inbox }: { searchParams: Promise<Filters>; inbox: "boarding_parent" | "school_owner" | "general" }) {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+  const isCounsellor = user.role === "counsellor";
+  const canAssign = user.role === "admin" || user.role === "manager";
+  const raw = await searchParams;
+  const q = value(raw.q).trim().slice(0, 100);
+  const status = stages.includes(value(raw.status)) ? value(raw.status) : "";
+  const source = sources.includes(value(raw.source)) ? value(raw.source) : "";
+  const category = inbox;
+  const partnership = inbox === "school_owner" && Object.hasOwn(partnershipStages,value(raw.partnership)) ? value(raw.partnership) : "";
+  const workflow = inbox !== "school_owner" && Object.hasOwn(parentStageLabels,value(raw.workflow)) ? value(raw.workflow) : "";
+  const work = ["overdue","no_next","visits","converted","unassigned"].includes(value(raw.work)) ? value(raw.work) : "";
+  const basePath = inbox === "boarding_parent" ? "/leads/boarding-parents" : inbox === "school_owner" ? "/leads/school-owners" : "/leads";
+  const title = inbox === "boarding_parent" ? "Boarding Parent Leads" : inbox === "school_owner" ? "Residential School Owner Leads" : "Lead Workspaces";
+  const owner = !isCounsellor && (value(raw.owner) === "unassigned" || /^\d+$/.test(value(raw.owner))) ? value(raw.owner) : "";
+  const requestedPage = Number(value(raw.page));
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+  if (isCounsellor) { where.push("l.owner_id = ?"); args.push(user.id); }
+  if (q) {
+    const term = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+    where.push("(f.parent_name LIKE ? OR f.primary_phone LIKE ? OR l.student_name LIKE ? OR sp.school_name LIKE ? OR sp.contact_name LIKE ? OR sp.city LIKE ?)");
+    args.push(term, term, term, term, term, term);
+  }
+  if (partnership) { where.push("COALESCE(sp.stage, CASE WHEN l.status='lost' THEN 'closed' ELSE 'new' END) = ?"); args.push(partnership); }
+  if (status) { where.push("l.status = ?"); args.push(status); }
+  if (source) { where.push("l.source = ?"); args.push(source); }
+  if (category) { where.push("l.enquiry_category = ?"); args.push(category); }
+  if (owner === "unassigned") where.push("l.owner_id IS NULL");
+  else if (owner) { where.push("l.owner_id = ?"); args.push(owner); }
+  if (workflow) { where.push(`(${parentStageSql()}) = ?`); args.push(workflow); }
+  if (work === "unassigned") where.push("l.owner_id IS NULL");
+  if (work === "overdue") where.push("l.status NOT IN ('lost','admitted') AND COALESCE(sp.stage,'new') NOT IN ('confirmed','closed') AND EXISTS(SELECT 1 FROM tasks ft WHERE ft.lead_id=l.id AND ft.completed_at IS NULL AND ft.due_at < UTC_TIMESTAMP(3))");
+  if (work === "no_next") where.push("l.status NOT IN ('lost','admitted') AND COALESCE(sp.stage,'new') NOT IN ('confirmed','closed') AND NOT EXISTS(SELECT 1 FROM tasks ft WHERE ft.lead_id=l.id AND ft.completed_at IS NULL)");
+  if (work === "visits") where.push("EXISTS(SELECT 1 FROM school_visits fv WHERE fv.lead_id=l.id AND fv.status='scheduled')");
+  if (work === "converted") where.push("l.status='admitted'");
+  const condition = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const from = `FROM leads l JOIN families f ON f.id = l.family_id LEFT JOIN crm_users u ON u.id = l.owner_id LEFT JOIN school_partnerships sp ON sp.lead_id=l.id ${condition}`;
+  const [[counts], [owners]] = await Promise.all([
+    db.execute<CountRow[]>(`SELECT COUNT(*) AS total ${from}`, args),
+    isCounsellor ? Promise.resolve([[] as OwnerRow[]]) : db.query<OwnerRow[]>("SELECT id, name, role FROM crm_users WHERE is_active = 1 ORDER BY name"),
+  ]);
+  const total = counts[0]?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.min(page, pages);
+  const offset = (currentPage - 1) * pageSize;
+  const sql = `SELECT l.id, f.parent_name, f.primary_phone, l.student_name, l.class_sought,
+    l.school_type, l.preferred_location, l.source, l.source_detail, l.enquiry_category, l.status, l.received_at,
+    COALESCE(sp.stage, CASE WHEN l.status='lost' THEN 'closed' ELSE 'new' END) AS partnership_stage,sp.school_name,sp.contact_name,sp.contact_phone,sp.city AS school_city,
+    u.name AS owner_name, ${parentStageSql()} AS workflow_stage,
+    (SELECT la.outcome FROM lead_activities la WHERE la.lead_id=l.id AND la.activity_type IN ('call','whatsapp','email') ORDER BY la.occurred_at DESC,la.id DESC LIMIT 1) AS last_outcome,
+    (SELECT nt.title FROM tasks nt WHERE nt.lead_id=l.id AND nt.completed_at IS NULL ORDER BY nt.due_at,nt.id LIMIT 1) AS next_action,
+    (SELECT GROUP_CONCAT(CONCAT(ps.name, ": ", REPLACE(r.status, '_', ' ')) ORDER BY r.id SEPARATOR ' | ') FROM referrals r JOIN partner_schools ps ON ps.id = r.partner_school_id WHERE r.lead_id = l.id) AS school_progress,
+    (SELECT MIN(t.due_at) FROM tasks t WHERE t.lead_id = l.id AND t.completed_at IS NULL) AS due_at
+    ${from} ORDER BY l.received_at DESC, l.id DESC LIMIT ${pageSize} OFFSET ${offset}`;
+  const [leads] = await db.execute<LeadRow[]>(sql, args);
+  const pageLink = (target: number) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (status) params.set("status", status);
+    if (source) params.set("source", source);
+
+    if (partnership) params.set("partnership",partnership);
+    if (workflow) params.set("workflow",workflow);
+    if (work) params.set("work",work);
+    if (owner) params.set("owner", owner);
+    params.set("page", String(target));
+    return `${basePath}?${params.toString()}`;
+  };
+
+  const leadTable = (
+<div className="mt-8 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          {leads.length === 0 ? <p className="p-10 text-center text-slate-600">No enquiries match these filters.</p> :
+            <table className="w-full min-w-[800px] text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-100 text-slate-600"><tr>
+                {canAssign && <th className="px-3 py-4">Select</th>}<th className="px-5 py-4">Contact and student</th><th className="px-5 py-4">Enquiry category</th><th className="px-5 py-4">Requirement and schools</th>
+                <th className="px-5 py-4">Source</th><th className="px-5 py-4">Current stage / last outcome</th>
+                <th className="px-5 py-4">Owner</th><th className="px-5 py-4">Next action / due date</th>
+              </tr></thead>
+              <tbody>{leads.map((lead) => <tr key={lead.id} className="border-b border-slate-100 last:border-0">
+                {canAssign && <td className="px-3 py-4"><input type="checkbox" name="leadId" value={lead.id} aria-label={`Select lead ${lead.id}: ${lead.parent_name || "Contact not recorded"}`} /></td>}<td className="px-5 py-4"><Link href={`/leads/${lead.id}`} className="font-semibold text-blue-700 hover:underline">{lead.enquiry_category === "school_owner" ? lead.school_name || "School name to confirm" : lead.parent_name || "Contact not recorded"}</Link>
+                  <div className="text-slate-600">{lead.enquiry_category !== "school_owner" && <>{lead.student_name || "Student not recorded"} · </>}{lead.enquiry_category === "school_owner" ? `${lead.contact_name || lead.parent_name || "Contact pending"} · ${lead.contact_phone || lead.primary_phone}` : lead.primary_phone}</div></td>
+                <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${lead.enquiry_category === "school_owner" ? "bg-purple-100 text-purple-800" : lead.enquiry_category === "boarding_parent" ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-700"}`}>{categoryLabel(lead.enquiry_category)}</span></td>
+                <td className="px-5 py-4">{lead.enquiry_category === "school_owner" ? "School partnership" : <>{lead.school_type} · {lead.class_sought || "Class pending"}</>}<div className="text-slate-600">{lead.school_city || lead.preferred_location || "Location pending"}</div>{inbox !== "school_owner" && <div className="mt-2 line-clamp-2 text-xs text-blue-800">{lead.school_progress || "No school assigned yet"}</div>}</td>
+                <td className="px-5 py-4"><span className="capitalize">{lead.source.replaceAll("_", " ")}</span><div className="mt-1 text-xs text-slate-500">{lead.source_detail}</div></td>
+                <td className="px-5 py-4"><p className="font-medium">{lead.enquiry_category === "school_owner" ? partnershipStages[lead.partnership_stage] : parentStageLabels[lead.workflow_stage]}</p><p className="mt-1 text-xs text-slate-500">{lead.last_outcome || "No contact recorded"}</p>{["on_hold","lost","admitted"].includes(lead.status) && <p className="mt-1 text-xs capitalize text-blue-700">{lead.status.replaceAll("_", " ")}</p>}</td>
+                <td className="px-5 py-4">{lead.owner_name || "Unassigned"}</td>
+                <td className="px-5 py-4"><p className="mb-1 text-xs font-medium">{lead.next_action || (["admitted","lost"].includes(lead.status) ? "Closed" : "No next action")}</p>{lead.due_at ? new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(lead.due_at)) : "Not set"}</td>
+              </tr>)}</tbody>
+            </table>}
+        </div>
+  );
+
+  return (
+    <main className="min-h-screen bg-slate-50 px-5 py-9 text-slate-900">
+      <div className="mx-auto max-w-6xl">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div><Link href="/dashboard" className="text-sm text-blue-700 hover:underline">← Dashboard</Link>
+            <h1 className="mt-3 text-3xl font-bold">{title}</h1>
+            <p className="mt-1 text-slate-600">{inbox === "general" ? "Open a dedicated inbox below. Other and unclassified enquiries are listed here." : isCounsellor ? "Your assigned enquiries" : "Enquiries across the team"}</p>
+          </div>
+          <Link href={`/leads/new?category=${inbox}`} className="rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800">Add lead</Link>
+        </div>
+        <nav aria-label="Lead inboxes" className="mt-6 flex flex-wrap gap-3">{[["/leads/boarding-parents", "Boarding parents"], ["/leads/school-owners", "School owners"], ["/leads", "Other enquiries"]].map(([href, label]) => <Link key={href} href={href} aria-current={href === basePath ? "page" : undefined} className={`rounded-lg border px-4 py-2 text-sm font-semibold ${href === basePath ? "border-blue-700 bg-blue-700 text-white" : "border-slate-300 bg-white text-blue-700"}`}>{label}</Link>)}</nav>
+        <form method="get" action={basePath} className="mt-7 grid gap-3 rounded-xl border border-slate-200 bg-white p-5 sm:grid-cols-2 lg:grid-cols-5">
+          <label className="text-sm font-medium lg:col-span-2">{inbox === "school_owner" ? "Search school, contact, city or phone" : "Search contact, student, or phone"}<input name="q" defaultValue={q} maxLength={100} placeholder="Name or phone number" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" /></label>
+          {inbox !== "school_owner" && <label className="text-sm font-medium">Stage<select name="status" defaultValue={status} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"><option value="">All stages</option>{stages.map((stage) => <option key={stage} value={stage}>{stage.replaceAll("_", " ")}</option>)}</select></label>}
+          <label className="text-sm font-medium">Source<select name="source" defaultValue={source} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"><option value="">All sources</option>{sources.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></label>
+          {!isCounsellor && <label className="text-sm font-medium">Owner<select name="owner" defaultValue={owner} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"><option value="">All owners</option><option value="unassigned">Unassigned</option>{owners.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>}
+          {inbox === "school_owner" && <label className="text-sm font-medium">Partnership stage<select name="partnership" defaultValue={partnership} className="mt-1 w-full rounded-lg border bg-white px-3 py-2"><option value="">All partnership stages</option>{Object.entries(partnershipStages).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>}
+          {inbox !== "school_owner" && <label className="text-sm font-medium">Workflow stage<select name="workflow" defaultValue={workflow} className="mt-1 w-full rounded-lg border bg-white px-3 py-2"><option value="">All workflow stages</option>{Object.entries(parentStageLabels).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>}
+          <label className="text-sm font-medium">Needs attention<select name="work" defaultValue={work} className="mt-1 w-full rounded-lg border bg-white px-3 py-2"><option value="">All leads</option><option value="unassigned">Unassigned</option><option value="overdue">Overdue follow-ups</option><option value="no_next">No next action</option>{inbox !== "school_owner" && <><option value="visits">Visits scheduled</option><option value="converted">Converted</option></>}</select></label>
+          <div className="flex items-end gap-3"><button className="rounded-lg bg-blue-700 px-4 py-2 font-medium text-white hover:bg-blue-800">Apply</button><Link href={basePath} className="py-2 text-sm text-blue-700 hover:underline">Clear</Link></div>
+        </form>
+        <p className="mt-4 text-sm text-slate-600">{total} matching {total === 1 ? "lead" : "leads"} · Page {currentPage} of {pages}</p>
+        {canAssign ? <BulkAssignmentForm key={pageLink(currentPage)} category={inbox} counsellors={owners.filter(member => member.role === "counsellor").map(({ id, name }) => ({ id, name }))}>{leadTable}</BulkAssignmentForm> : leadTable}
+        {pages > 1 && <nav aria-label="Lead pages" className="mt-5 flex items-center justify-between text-sm">
+          {currentPage > 1 ? <Link href={pageLink(currentPage - 1)} className="text-blue-700 hover:underline">← Previous</Link> : <span />}
+          <span className="text-slate-600">Page {currentPage} of {pages}</span>
+          {currentPage < pages ? <Link href={pageLink(currentPage + 1)} className="text-blue-700 hover:underline">Next →</Link> : <span />}
+        </nav>}
+      </div>
+    </main>
+  );
+}
