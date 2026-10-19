@@ -1,4 +1,5 @@
 import Link from "next/link";
+import SchoolOwnerPage from "@/app/school-owners/[id]/page";
 import { parentStageSql, preferredSchoolSql } from "@/lib/lead-stage";
 import { parentStageLabels, stageNextActions, type ParentStage } from "@/lib/parent-workflow";
 import { notFound, redirect } from "next/navigation";
@@ -26,7 +27,7 @@ const stages = ["new", "attempting_contact", "connected", "qualified", "explorin
 
 export default async function LeadDetailPage({ params, searchParams }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; error?: string; saved?: string; referralError?: string; referralSaved?: string; decisionSaved?: string; assignmentError?: string; assigned?: string }>;
+  searchParams: Promise<{ tab?: string; notice?: string; error?: string; saved?: string; referralError?: string; referralSaved?: string; decisionSaved?: string; assignmentError?: string; assigned?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
@@ -45,6 +46,7 @@ export default async function LeadDetailPage({ params, searchParams }: {
   );
   const lead = rows[0];
   if (!lead) notFound();
+  if (lead.enquiry_category === "school_owner") return SchoolOwnerPage({params,searchParams});
   const [staff] = user.role === "counsellor" ? [[] as Staff[]] : await db.query<Staff[]>("SELECT id, name, role FROM crm_users WHERE is_active = 1 ORDER BY name");
   const [[tasks], [activities]] = await Promise.all([
     db.execute<Task[]>("SELECT id, title, due_at FROM tasks WHERE lead_id = ? AND completed_at IS NULL ORDER BY due_at, id", [id]),

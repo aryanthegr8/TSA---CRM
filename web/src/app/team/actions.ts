@@ -61,12 +61,12 @@ export async function manageTeamMember(_previous: { message: string; ok: boolean
       await connection.execute("UPDATE crm_users SET is_active = 1 WHERE id = ?", [id]);
       message = `Account restored for ${target.name}.`;
     } else {
-      const [leads] = await connection.execute<RowDataPacket[]>("SELECT id FROM leads WHERE owner_id = ? AND status NOT IN ('lost','admitted') ORDER BY id FOR UPDATE", [id]);
+      const [leads] = await connection.execute<RowDataPacket[]>("SELECT id FROM leads WHERE owner_id = ? AND status NOT IN ('lost','admitted') AND NOT EXISTS (SELECT 1 FROM school_partnerships sp WHERE sp.lead_id=leads.id AND sp.stage IN ('confirmed','closed')) ORDER BY id FOR UPDATE", [id]);
       const [tasks] = await connection.execute<RowDataPacket[]>("SELECT id FROM tasks WHERE owner_id = ? AND completed_at IS NULL FOR UPDATE", [id]);
       if (leads.length || tasks.length) {
         const [staff] = Number.isSafeInteger(replacement) && replacement > 0 && replacement !== id ? await connection.execute<RowDataPacket[]>("SELECT id, name FROM crm_users WHERE id = ? AND is_active = 1 AND role IN ('admin','manager','counsellor') FOR UPDATE", [replacement]) : [[]];
         if (!staff.length) { await connection.rollback(); return { message: "Choose an active replacement for this account’s open leads and pending tasks.", ok: false }; }
-        await connection.execute("UPDATE leads SET owner_id = ? WHERE owner_id = ? AND status NOT IN ('lost','admitted')", [replacement, id]);
+        await connection.execute("UPDATE leads SET owner_id = ? WHERE owner_id = ? AND status NOT IN ('lost','admitted') AND NOT EXISTS (SELECT 1 FROM school_partnerships sp WHERE sp.lead_id=leads.id AND sp.stage IN ('confirmed','closed'))", [replacement, id]);
         await connection.execute("UPDATE tasks SET owner_id = ? WHERE owner_id = ? AND completed_at IS NULL", [replacement, id]);
         for (const lead of leads) {
           await connection.execute("UPDATE tasks SET owner_id = ? WHERE lead_id = ? AND completed_at IS NULL", [replacement, lead.id]);

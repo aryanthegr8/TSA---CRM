@@ -8,7 +8,7 @@ import { getCurrentUser } from "@/lib/current-user";
 interface School extends RowDataPacket {
   id: number; name: string; school_type: string; city: string | null;
   state: string | null; board: string | null; classes_offered: string | null;
-  is_active: number; referral_count: number;
+  agreement_lead_id: number | null; is_active: number; referral_count: number;
 }
 
 export default async function PartnerSchoolsPage({ searchParams }: {
@@ -32,6 +32,7 @@ export default async function PartnerSchoolsPage({ searchParams }: {
   const [schools] = await db.execute<School[]>(
     `SELECT ps.id, ps.name, ps.school_type, ps.city, ps.state, ps.board,
       ps.classes_offered, ps.is_active,
+      (SELECT sp.lead_id FROM school_partnerships sp WHERE sp.partner_school_id=ps.id AND sp.stage='confirmed' LIMIT 1) AS agreement_lead_id,
       (SELECT COUNT(*) FROM referrals r WHERE r.partner_school_id = ps.id) AS referral_count
       FROM partner_schools ps WHERE ${conditions.join(" AND ")}
       ORDER BY ps.name, ps.id LIMIT 200`, values
@@ -55,7 +56,7 @@ export default async function PartnerSchoolsPage({ searchParams }: {
     <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       {schools.length === 0 ? <p className="p-10 text-center text-slate-600">No partner schools match these filters.</p> :
         <table className="w-full min-w-[700px] text-left text-sm"><thead className="bg-slate-100 text-slate-600"><tr><th className="px-5 py-4">School</th><th className="px-5 py-4">Location</th><th className="px-5 py-4">Type</th><th className="px-5 py-4">Board</th><th className="px-5 py-4">Classes</th><th className="px-5 py-4">Referrals</th>{canManage && <th className="px-5 py-4">Actions</th>}</tr></thead>
-          <tbody>{schools.map((school) => <tr key={school.id} className="border-t border-slate-100"><td className="px-5 py-4 font-semibold">{school.name}</td><td className="px-5 py-4">{[school.city, school.state].filter(Boolean).join(", ") || "Pending"}</td><td className="px-5 py-4 capitalize">{school.school_type}</td><td className="px-5 py-4">{school.board || "Pending"}</td><td className="px-5 py-4">{school.classes_offered || "Pending"}</td><td className="px-5 py-4">{school.referral_count}</td>{canManage && <td className="px-5 py-4"><SchoolActions id={school.id} name={school.name} active={Boolean(school.is_active)} /></td>}</tr>)}</tbody></table>}
+          <tbody>{schools.map((school) => <tr key={school.id} className="border-t border-slate-100"><td className="px-5 py-4 font-semibold">{school.name}</td><td className="px-5 py-4">{[school.city, school.state].filter(Boolean).join(", ") || "Pending"}</td><td className="px-5 py-4 capitalize">{school.school_type}</td><td className="px-5 py-4">{school.board || "Pending"}</td><td className="px-5 py-4">{school.classes_offered || "Pending"}</td><td className="px-5 py-4">{school.referral_count}</td>{canManage && <td className="px-5 py-4"><>{school.agreement_lead_id&&<Link href={`/leads/${school.agreement_lead_id}?tab=commercial`} className="mb-2 block text-xs font-medium text-blue-700 hover:underline">Commission &amp; MOU</Link>}<SchoolActions id={school.id} name={school.name} active={Boolean(school.is_active)} /></></td>}</tr>)}</tbody></table>}
     </div>
   </div></main>;
 }

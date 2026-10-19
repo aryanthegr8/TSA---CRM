@@ -11,8 +11,8 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const [rows] = user.role === "counsellor"
-    ? await db.execute<CountRow[]>("SELECT COUNT(*) AS total, 0 AS unassigned FROM leads WHERE owner_id = ? AND status NOT IN ('admitted','lost')", [user.id])
-    : await db.query<CountRow[]>("SELECT COUNT(*) AS total, SUM(owner_id IS NULL) AS unassigned FROM leads WHERE status NOT IN ('admitted','lost')");
+    ? await db.execute<CountRow[]>("SELECT COUNT(*) AS total, 0 AS unassigned FROM leads WHERE owner_id = ? AND status NOT IN ('admitted','lost') AND NOT EXISTS (SELECT 1 FROM school_partnerships sp WHERE sp.lead_id=leads.id AND sp.stage IN ('confirmed','closed'))", [user.id])
+    : await db.query<CountRow[]>("SELECT COUNT(*) AS total, SUM(owner_id IS NULL) AS unassigned FROM leads WHERE status NOT IN ('admitted','lost') AND NOT EXISTS (SELECT 1 FROM school_partnerships sp WHERE sp.lead_id=leads.id AND sp.stage IN ('confirmed','closed'))");
   const count = rows[0];
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">

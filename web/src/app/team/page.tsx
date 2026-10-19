@@ -13,7 +13,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
   if (!user) redirect("/login");
   if (!["admin", "manager"].includes(user.role)) redirect("/dashboard");
   const [members] = await db.query<Member[]>(`SELECT u.id, u.name, u.email, u.role, u.is_active,
-    (SELECT COUNT(*) FROM leads l WHERE l.owner_id = u.id AND l.status NOT IN ('lost','admitted')) AS open_leads
+    (SELECT COUNT(*) FROM leads l WHERE l.owner_id = u.id AND l.status NOT IN ('lost','admitted') AND NOT EXISTS (SELECT 1 FROM school_partnerships sp WHERE sp.lead_id=l.id AND sp.stage IN ('confirmed','closed'))) AS open_leads
     FROM crm_users u ORDER BY u.is_active DESC, u.name`);
   const { error, saved } = await searchParams;
   const input = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5";
