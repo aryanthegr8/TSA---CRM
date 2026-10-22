@@ -22,10 +22,12 @@ export default async function DashboardPage() {
       </div></header>
       <div className="mx-auto max-w-6xl px-5 py-10">
         <h2 className="text-2xl font-semibold">Welcome, {user.name}</h2>
-        <p className="mt-1 text-slate-600">Your role: {user.role}. Start by recording and following up on enquiries.</p>
+        <p className="mt-1 text-slate-600">Your role: {user.role}. Review new enquiries or work from the follow-up board.</p>
         <div className="mt-6 flex flex-wrap gap-3">
-          <Link href="/my-day" className="inline-block rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800">My Day</Link>
-          <Link href="/leads" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Open Lead Inbox</Link>
+          <Link href="/follow-ups" className="inline-block rounded-lg bg-slate-900 px-4 py-2.5 font-medium text-white">Follow-up board</Link>
+          <Link href="/my-day" className="inline-block rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800">My tasks</Link>
+          <Link href="/leads" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">New lead inbox</Link>
+          <Link href="/leads/day-parents" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium">Day-school parents · Delhi NCR</Link>
           <Link href="/partner-schools" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-900 hover:bg-slate-100">Partner schools</Link>
           <Link href="/visits" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium">School visits</Link>
           <Link href="/conversions" className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-medium">Confirmed admissions</Link>

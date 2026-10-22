@@ -1,4 +1,6 @@
 "use server";
+import { getRequestedSchool, assertRequestedSchoolSelection, SchoolPreferenceError } from "@/lib/requested-school";
+
 import { redirect, notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
@@ -55,6 +57,11 @@ export async function recordParentDecision(leadId: number, _previous: { message:
     if (read("expectedCallCount") === "" || Number(read("expectedCallCount")) !== Number(lead.call_count) || read("expectedStage") !== currentStage || !stageOutcomeAllowed(currentStage,heading,outcome)) {
       await connection.rollback(); return { message: "The lead has moved to another stage, or this outcome is unavailable. Refresh to see its next actions." };
     }
+    if(lead.enquiry_category==="day_parent"&&outcome==="discussing"&&read("schoolType")!=="day"){await connection.rollback();return{message:"Day-school parent leads must remain day-school enquiries."};}
+    const requested=await getRequestedSchool(connection,leadId);
+    if(requested && outcome==='discussing' && read('schoolType')!=='boarding'){await connection.rollback();return{message:'This is a boarding school request. Keep the school type as boarding or remove the request first.'};}
+    if(outcome==='requested_unavailable' && (!requested?.exclusive_only || requested.partnership_stage!=='closed' || form.get('alternativesDeclined')!=='yes')){await connection.rollback();return{message:'Close with this reason only after the school declines collaboration and the parent reconfirms that alternatives are unacceptable.'};}
+    await assertRequestedSchoolSelection(connection,leadId,ids);
     const refs: {id:number;schoolId:number;name:string;status:string}[] = [];
     for (const schoolId of ids) {
       const [schools] = await connection.execute<RowDataPacket[]>("SELECT name, school_type, is_active FROM partner_schools WHERE id = ? FOR UPDATE", [schoolId]);
@@ -126,7 +133,7 @@ export async function recordParentDecision(leadId: number, _previous: { message:
       await connection.execute("INSERT INTO tasks (lead_id, referral_id, owner_id, title, task_type, due_at) VALUES (?, ?, ?, ?, 'call_parent', ?)", [leadId,singleSchool.includes(outcome) ? refs[0].id : null,lead.owner_id ?? user.id,({ transferred: "Call parent to discuss shared schools", school_contacted: "Discuss school response with parent", comparing: "Confirm the parent’s preferred school", visit_scheduled: "Confirm school visit and collect feedback", visit_rescheduled: "Confirm rescheduled school visit", visit_completed: "Discuss visit feedback and admission decision", proceed: "Follow up on chosen school admission", application: "Check application progress", documents: "Follow up on pending documents", payment: "Follow up on pending admission payment", callback: "Call parent at requested time", next_session: "Reconnect for the next admission session", no_answer: "Retry unanswered parent call", busy: "Retry parent call", unreachable: "Retry unreachable parent number" } as Record<string,string>)[outcome] ?? (requestCalls ? "Confirm school calls and collect parent feedback" : `Follow up with parent: ${label}`),sqlDate(due!)]);
     }
     await connection.commit();
-  } catch (error) { await connection.rollback(); throw error; }
+  } catch (error) { await connection.rollback(); if(error instanceof SchoolPreferenceError)return {message:error.message}; throw error; }
   finally { connection.release(); }
   revalidatePath("/leads", "layout"); revalidatePath("/dashboard"); revalidatePath("/visits"); revalidatePath("/conversions");
   redirect(`/leads/${leadId}?decisionSaved=1&tab=follow-up`);

@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
-import { metaForms, metaFormId } from "@/lib/lead-categories";
+import { resolveMetaForm, metaFormId } from "@/lib/lead-categories";
 
 export const runtime = "nodejs";
 
@@ -78,7 +78,7 @@ async function saveLead(leadId: string, pageToken: string, version: string, even
   const data = await response.json() as MetaLead;
   if (String(data.id) !== leadId || !Array.isArray(data.field_data)) throw new Error("Invalid Meta lead response");
   const formId = metaFormId(data.form_id) ?? metaFormId(eventFormId);
-  const form = formId ? metaForms[formId] : undefined;
+  const form = resolveMetaForm(formId);
   const category = form?.category ?? "general";
 
   const fields = new Map<string, string>();
@@ -94,7 +94,7 @@ async function saveLead(leadId: string, pageToken: string, version: string, even
     (category === "school_owner" ? "School contact name pending" : "Parent name pending");
   const student = firstAnswer(fields, "student_name", "child_name").slice(0, 160);
   const classSought = firstAnswer(fields, "class", "grade", "student_class").slice(0, 40);
-  const location = firstAnswer(fields, "preferred_location", "city").slice(0, 255);
+  const location = firstAnswer(fields, "preferred_location", "preferred_area", "locality", "area", "city").slice(0, 255);
   const email = firstAnswer(fields, "email").slice(0, 255);
   const notes = [...fields.entries()].map(([name, answer]) => `${name}: ${answer}`).join(" | ").slice(0, 2000);
   const preferredEmail = process.env.CRM_INTAKE_OWNER_EMAIL?.trim().toLowerCase();

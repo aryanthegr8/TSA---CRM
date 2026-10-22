@@ -1,5 +1,6 @@
 "use server";
 
+import { schoolWhatsappRecipient } from "@/lib/school-whatsapp";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
@@ -21,12 +22,14 @@ export async function addPartnerSchool(form: FormData) {
   const classes = value(form, "classes");
   const fee = value(form, "fee");
   const notes = value(form, "notes");
+  const whatsappRecipient = value(form, "whatsappRecipient");
+  const ncr=form.get("dayParentDelhiNcr")==="yes"?1:0;
   const contactName = value(form, "contactName");
   const contactPhone = value(form, "contactPhone").replace(/[\s()-]/g, "");
   const contactEmail = value(form, "contactEmail");
-  if (!name || name.length > 255 || !["day", "boarding", "both"].includes(type) ||
+  if (ncr&&(!["day","both"].includes(type)||!city)||!name || name.length > 255 || !["day", "boarding", "both"].includes(type) ||
       city.length > 120 || state.length > 120 || board.length > 120 || classes.length > 255 ||
-      fee.length > 255 || notes.length > 5000 || contactName.length > 160 ||
+      whatsappRecipient.length > 255 || fee.length > 255 || notes.length > 5000 || contactName.length > 160 ||
       (contactPhone && !/^\+[1-9]\d{7,14}$/.test(contactPhone)) ||
       (contactEmail && (!/^\S+@\S+\.\S+$/.test(contactEmail) || contactEmail.length > 255))) {
     redirect("/partner-schools/new?error=invalid");
@@ -46,8 +49,8 @@ export async function addPartnerSchool(form: FormData) {
     }
     const [result] = await connection.execute<ResultSetHeader>(
       `INSERT INTO partner_schools (name, school_type, city, state, board, classes_offered,
-        fee_note, internal_notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, type, city || null, state || null, board || null, classes || null, fee || null, notes || null]
+        fee_note, internal_notes, whatsapp_recipient, day_parent_delhi_ncr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [name, type, city || null, state || null, board || null, classes || null, fee || null, notes || null, schoolWhatsappRecipient(name, whatsappRecipient),ncr]
     );
     if (contactName) {
       await connection.execute(

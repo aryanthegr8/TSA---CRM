@@ -1,19 +1,22 @@
 import Link from "next/link";
+import {visibleDayParentSchools} from "@/lib/day-parent-schools";
+import {getRequestedSchool,visibleRequestedSchools} from "@/lib/requested-school";
 import { preferredSchoolSql } from "@/lib/lead-stage";
+import {reopenSchoolOption} from "./referral-actions";
 import ReferralUpdateForm from "./referral-update-form";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
 
 
-type Referral = RowDataPacket & { id: number; partner_school_id: number; name: string; city: string | null; state: string | null; status: string; parent_selected: number; reason_for_match: string | null; school_response: string | null; closed_reason: string | null; sent_at: Date | null; school_contact_id: number | null; due_at: Date | null; sent_by_name: string | null; transfer_channel: string | null; transfer_recipient: string | null; visit_scheduled_at: Date | null; visited_at: Date | null };
+type Referral = RowDataPacket & { id: number; partner_school_id: number; name: string; city: string | null; state: string | null; status: string; default_recipient: string | null; parent_selected: number; reason_for_match: string | null; school_response: string | null; closed_reason: string | null; sent_at: Date | null; school_contact_id: number | null; due_at: Date | null; sent_by_name: string | null; transfer_channel: string | null; transfer_recipient: string | null; visit_scheduled_at: Date | null; visited_at: Date | null };
 type Contact = RowDataPacket & { id: number; partner_school_id: number; name: string; phone: string | null };
 import { referralTransitions as next, referralLabel as label } from "@/lib/referral-workflow";
 const stamp = (date: Date) => new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(date));
 
 export default async function ReferralsSection({ leadId, active, error, saved }: { leadId: number; active: boolean; error?: string; saved?: string }) {
   const [[referrals], [contacts]] = await Promise.all([
-    db.execute<Referral[]>(`SELECT r.id, r.partner_school_id, r.status, r.reason_for_match, r.school_response, r.closed_reason,
-      ${preferredSchoolSql("r")} = r.id AS parent_selected, r.sent_at, r.school_contact_id, r.transfer_channel, r.transfer_recipient, r.visit_scheduled_at, r.visited_at, sender.name AS sent_by_name, ps.name, ps.city, ps.state,
+    db.execute<Referral[]>(`SELECT r.id, r.partner_school_id, ps.school_type, ps.is_active, ps.day_parent_delhi_ncr, r.status, r.reason_for_match, r.school_response, r.closed_reason,
+      ${preferredSchoolSql("r")} = r.id AS parent_selected, r.sent_at, r.school_contact_id, r.transfer_channel, r.transfer_recipient, r.visit_scheduled_at, r.visited_at, sender.name AS sent_by_name, ps.name, ps.city, ps.state, ps.whatsapp_recipient AS default_recipient,
       (SELECT MIN(t.due_at) FROM tasks t WHERE t.referral_id = r.id AND t.completed_at IS NULL) AS due_at
       FROM referrals r JOIN partner_schools ps ON ps.id = r.partner_school_id LEFT JOIN crm_users sender ON sender.id = r.sent_by_user_id
       WHERE r.lead_id = ? ORDER BY r.created_at DESC, r.id DESC`, [leadId]),
@@ -21,15 +24,18 @@ export default async function ReferralsSection({ leadId, active, error, saved }:
       FROM school_contacts c JOIN referrals r ON r.partner_school_id = c.partner_school_id
       WHERE r.lead_id = ? AND c.is_active = 1 ORDER BY c.is_primary DESC, c.name`, [leadId]),
   ]);
+  const[leadRows]=await db.execute<RowDataPacket[]>("SELECT enquiry_category FROM leads WHERE id=?",[leadId]);
+  const request=await getRequestedSchool(db,leadId);
+  const permitted=new Set(visibleDayParentSchools(visibleRequestedSchools(referrals.map(ref=>({id:Number(ref.partner_school_id),school_type:String(ref.school_type),is_active:Number(ref.is_active),day_parent_delhi_ncr:Number(ref.day_parent_delhi_ncr)})),request),leadRows[0]?.enquiry_category).map(s=>s.id));
   return <section id="referrals" className="mt-7 scroll-mt-6 rounded-xl border border-slate-200 bg-white p-6">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">School referrals</h2><p className="mt-1 text-sm text-slate-600">Track each school separately. Open a row for school updates. Record visits and admission in the Follow-up tab.</p></div>
       {active && <Link href={`/leads/${leadId}/refer`} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">Add schools</Link>}
       {active && <Link href={`/leads/${leadId}/refer`} className="rounded-lg border border-blue-700 px-4 py-2 text-sm font-medium text-blue-700">Prepare WhatsApp message</Link>}
     </div>
     {saved && <p role="status" className="mt-4 rounded-lg bg-green-50 p-3 text-sm text-green-800">School referral updated.</p>}
-    {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error === "transfer" ? "For a school transfer, choose a channel and enter the recipient." : error === "visit" ? "Set a future school visit date and time." : error === "duplicate" ? "This school is already shortlisted." : error === "due" ? "Set a future follow-up time for this school." : error === "transition" ? "This stage change is no longer available. Refresh and try again." : "Check the note, contact and stage."}</p>}
+    {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error === "preference" ? "School eligibility or parent preference prevents this action. For day-school parents, select a manager-verified Delhi NCR day school." : error === "transfer" ? "For a school transfer, choose a channel and enter the recipient." : error === "visit" ? "Set a future school visit date and time." : error === "duplicate" ? "This school is already shortlisted." : error === "due" ? "Set a future follow-up time for this school." : error === "transition" ? "This stage change is no longer available. Refresh and try again." : "Check the note, contact and stage."}</p>}
     {referrals.filter(ref => (ref.parent_selected > 0 || ref.status === "admitted") && ref.status !== "not_proceeding").map(ref => <div key={ref.id} className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4"><p className="text-xs font-semibold uppercase text-green-700">{ref.status === "admitted" ? "Admission confirmed" : "Chosen school"}</p><p className="mt-1 font-semibold">{ref.name}</p><p className="mt-1 text-sm text-green-800">{label(ref.status)}{ref.due_at ? ` · Next follow-up ${stamp(ref.due_at)}` : ""}</p></div>)}
-    {referrals.some(ref => ref.status === "not_proceeding") && <details className="mt-4 rounded-xl border p-4"><summary className="cursor-pointer text-sm font-medium text-slate-500">Previous options ({referrals.filter(ref => ref.status === "not_proceeding").length})</summary><ul className="mt-3 space-y-2">{referrals.filter(ref => ref.status === "not_proceeding").map(ref => <li key={ref.id} className="text-sm"><strong>{ref.name}</strong><span className="ml-2 text-slate-500">{ref.closed_reason || "Not proceeding"}</span></li>)}</ul></details>}
+    {referrals.some(ref => ref.status === "not_proceeding") && <details className="mt-4 rounded-xl border p-4"><summary className="cursor-pointer text-sm font-medium text-slate-500">Previous options ({referrals.filter(ref => ref.status === "not_proceeding").length})</summary><ul className="mt-3 space-y-2">{referrals.filter(ref => ref.status === "not_proceeding").map(ref => <li key={ref.id} className="text-sm"><strong>{ref.name}</strong><span className="ml-2 text-slate-500">{ref.closed_reason || "Not proceeding"}</span>{active&&permitted.has(Number(ref.partner_school_id))&&<details className="mt-2"><summary className="cursor-pointer text-xs font-medium text-blue-700">Reopen this school option</summary><form action={reopenSchoolOption.bind(null,leadId,ref.id)} className="mt-2 grid gap-2"><input name="note" required maxLength={2000} placeholder="Why does the parent want to reconsider this school?" className="rounded-lg border p-2"/><label className="text-xs">Next parent follow-up (India time)<input type="datetime-local" name="followUp" required className="ml-2 rounded-lg border p-2"/></label><button className="rounded-lg border p-2 text-sm text-blue-700">Reopen option and schedule follow-up</button><p className="text-xs text-slate-500">Previous sharing is retained. Old visits stay cancelled. This does not send a message.</p></form></details>}</li>)}</ul></details>}
     {referrals.length === 0 ? <p className="mt-5 text-sm text-slate-600">No schools shortlisted yet.</p> : <div className="mt-5 grid gap-4">{referrals.filter(ref => ref.status !== "not_proceeding").map((referral) => {
       const choices = (next[referral.status] || []).filter(stage => !["visit_scheduled","school_visited","admitted"].includes(stage));
       const schoolContacts = contacts.filter((contact) => contact.partner_school_id === referral.partner_school_id);
@@ -45,7 +51,8 @@ export default async function ReferralsSection({ leadId, active, error, saved }:
         {referral.visited_at && <p className="mt-1 text-sm text-green-800">School visit recorded: {stamp(referral.visited_at)}</p>}
         {referral.due_at && <p className="mt-1 text-sm font-medium text-amber-800">Next school follow-up: {stamp(referral.due_at)}</p>}
         {referral.school_response && <p className="mt-2 text-sm text-slate-700">School response: {referral.school_response}</p>}
-        {active && choices.length > 0 && <ReferralUpdateForm leadId={leadId} referralId={referral.id} choices={choices} contacts={schoolContacts.map(({ id, name, phone }) => ({ id, name, phone }))} contactId={referral.school_contact_id} />}
+        {active && !permitted.has(Number(referral.partner_school_id)) && <p className="mt-3 text-sm text-amber-800">Updates paused by school eligibility or the parent’s requested-school preference. Previous records are preserved.</p>}
+        {active && permitted.has(Number(referral.partner_school_id)) && choices.length > 0 && <ReferralUpdateForm leadId={leadId} referralId={referral.id} choices={choices} defaultRecipient={referral.default_recipient} contacts={schoolContacts.map(({ id, name, phone }) => ({ id, name, phone }))} contactId={referral.school_contact_id} />}
 
         </div>
       </details>;

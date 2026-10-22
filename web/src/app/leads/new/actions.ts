@@ -13,7 +13,7 @@ export async function createLead(form: FormData) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const category = ["school_owner","boarding_parent"].includes(field(form,"category")) ? field(form,"category") : "general";
+  const category = ["school_owner","boarding_parent","day_parent"].includes(field(form,"category")) ? field(form,"category") : "general";
   const schoolOwner = category === "school_owner";
   const errorPath = `/leads/new?category=${category}&error=`;
   const phone = field(form, "phone").replace(/[\s()-]/g, "");
@@ -22,7 +22,7 @@ export async function createLead(form: FormData) {
   const classSought = field(form, "classSought");
   const location = field(form, "location");
   const source = field(form, "source");
-  const type = field(form, "schoolType");
+  const type = category === "day_parent" ? "day" : field(form, "schoolType");
   const due = field(form, "followUp");
   const note = field(form, "note");
   const admissionYear = field(form, "admissionYear");
@@ -66,5 +66,5 @@ export async function createLead(form: FormData) {
   revalidatePath("/dashboard");
   revalidatePath("/leads/school-owners");
   revalidatePath("/leads/boarding-parents");
-  redirect(category === "school_owner" ? "/leads/school-owners" : category === "boarding_parent" ? "/leads/boarding-parents" : "/leads");
+  redirect(category === "day_parent" ? "/leads/day-parents" : category === "school_owner" ? "/leads/school-owners" : category === "boarding_parent" ? "/leads/boarding-parents" : "/leads");
 }

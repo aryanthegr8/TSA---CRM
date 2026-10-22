@@ -1,4 +1,6 @@
 import Link from "next/link";
+import {dayParentSchoolSql} from "@/lib/day-parent-schools";
+import {getRequestedSchool,visibleRequestedSchools} from "@/lib/requested-school";
 import { notFound, redirect } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
@@ -29,6 +31,7 @@ export default async function FindSchools({ params, searchParams }: {
   if (lead.school_type !== "undecided") {
     filters.push("ps.school_type IN (?, 'both')"); values.push(lead.school_type);
   }
+  if (lead.enquiry_category === "day_parent") filters.push(dayParentSchoolSql);
   if (q) {
     filters.push("(ps.name LIKE ? OR ps.city LIKE ? OR ps.state LIKE ?)");
     values.push(`%${q}%`, `%${q}%`, `%${q}%`);
@@ -39,13 +42,16 @@ export default async function FindSchools({ params, searchParams }: {
        LEFT JOIN referrals r ON r.partner_school_id = ps.id AND r.lead_id = ?
        WHERE ${filters.join(" AND ")} ORDER BY ps.name LIMIT 100`, values
   );
+  const request=await getRequestedSchool(db,id);
+  const eligibleSchools=visibleRequestedSchools(schools,request);
   return <main className="min-h-screen bg-slate-50 px-5 py-9 text-slate-900"><div className="mx-auto max-w-5xl">
     <Link href={`/leads/${id}`} className="text-sm text-blue-700 hover:underline">← Lead details</Link>
+    {lead.enquiry_category === "day_parent" && <p className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">Only active day/both schools marked Delhi NCR eligible by a manager are shown.</p>}
     <h1 className="mt-3 text-3xl font-bold">Select suitable partner schools</h1>
     <p className="mt-2 text-slate-600">{lead.school_type === "undecided" ? "All active partners" : `${lead.school_type} schools`} · Preferred location: {lead.preferred_location || "not confirmed"}. Shortlisting stays internal.</p>
     {error && <p role="alert" className="mt-5 rounded-lg bg-red-50 p-3 text-red-700">Check the reason and try again.</p>}
     <form action={`/leads/${id}/refer`} className="mt-6 flex gap-3"><input name="q" defaultValue={q} placeholder="Search school, city, state" maxLength={100} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" /><button className="rounded-lg border border-slate-300 px-4 py-2 font-medium">Search</button></form>
-    <SchoolSelection key={q} leadId={id} schools={schools.map(school => ({ id: school.id, name: school.name, school_type: school.school_type, city: school.city, state: school.state, board: school.board, classes_offered: school.classes_offered, referral_id: school.referral_id }))} message={[
+    {eligibleSchools.length>0 && <SchoolSelection key={q} leadId={id} schools={eligibleSchools.map(school => ({ id: school.id, name: school.name, school_type: school.school_type, city: school.city, state: school.state, board: school.board, classes_offered: school.classes_offered, referral_id: school.referral_id }))} message={[
       "Admission enquiry — The School Admission", `CRM lead reference: ${id}`,
       `Parent: ${lead.parent_name || "Not recorded"}`, `Phone: ${lead.primary_phone}`,
       `Student: ${lead.student_name || "Not recorded"}`, `Class: ${lead.class_sought || "To confirm"}`,
@@ -53,8 +59,9 @@ export default async function FindSchools({ params, searchParams }: {
       `Preferred location: ${lead.preferred_location || "To confirm"}`, `Board: ${lead.board_preference || "To confirm"}`,
       `Annual budget (INR): ${lead.budget_min_inr ?? "To confirm"} – ${lead.budget_max_inr ?? "To confirm"}`,
       "Please contact the parent regarding suitable admission options and share an update with our counsellor.",
-    ].join("\n")} />
-    {!schools.length && <p className="mt-5 text-slate-600">No matching active schools. Try another search.</p>}
+    ].join("\n")} />}
+    {request?.exclusive_only ? <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Specific school only: {request.school_name}. Only this school is selectable after its signed MOU is verified and its partner record is active.</p> : null}
+    {!eligibleSchools.length && <p className="mt-5 text-slate-600">No matching active schools. Try another search.</p>}
 
   </div></main>;
 }

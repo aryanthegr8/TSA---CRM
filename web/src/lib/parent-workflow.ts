@@ -8,19 +8,21 @@ export const parentOutcomes = {
     visit_no_show: "Parent did not attend visit", proceed: "Proceeding with selected school", application: "Application in progress",
   },
   unanswered: { no_answer: "No answer", busy: "Busy", unreachable: "Switched off / unreachable" },
-  dead: { not_looking: "Not looking for admission", elsewhere: "Admission taken elsewhere", invalid: "Invalid number", wrong: "Wrong enquiry", declined: "Explicitly declined" },
+  dead: { requested_unavailable: "Requested school unavailable — alternatives declined", not_looking: "Not looking for admission", elsewhere: "Admission taken elsewhere", invalid: "Invalid number", wrong: "Wrong enquiry", declined: "Explicitly declined" },
   converted: { confirmed: "Confirm admission" },
 } as const;
 export const parentHeadings = { follow_up: "Follow-up", unanswered: "Didn’t answer", dead: "Dead lead", converted: "Converted" };
 export const schoolRequired = ["school_contacted", "transferred", "comparing", "proceed", "application", "documents", "payment", "confirmed", "visit_scheduled", "visit_completed", "visit_rescheduled", "visit_cancelled", "visit_no_show"];
 export const singleSchool = schoolRequired.filter(outcome => !["school_contacted", "transferred", "comparing"].includes(outcome));
 
-export type ParentStage = "requirements" | "qualified" | "schools" | "decision" | "visits" | "admission" | "converted" | "closed";
+export type ParentStage = "awaiting_requested" | "requirements" | "qualified" | "schools" | "decision" | "visits" | "admission" | "converted" | "closed";
 export const parentStageLabels: Record<ParentStage,string> = {
+ awaiting_requested: "Requested school — collaboration pending",
  requirements: "New enquiry", qualified: "Requirements confirmed", schools: "School coordination", decision: "Parent decision", visits: "School visit",
  admission: "Admission in progress", converted: "Admission confirmed", closed: "Closed",
 };
 const stageOptions: Record<ParentStage,string[]> = {
+ awaiting_requested: ["discussing","callback","next_session","budget","considering"],
  requirements: ["discussing","transferred","callback","next_session","budget","considering"],
  qualified: ["discussing","transferred","callback","next_session","budget","considering"],
  decision: ["school_contacted","comparing","budget","location","transferred","proceed","visit_scheduled","callback","considering","discussing"],
@@ -39,6 +41,7 @@ export function optionsForStage(stage: ParentStage, heading: keyof typeof parent
  return Object.fromEntries(Object.entries(parentOutcomes[heading]).filter(([outcome])=>stageOutcomeAllowed(stage,heading,outcome)));
 }
 export const stageNextActions: Record<ParentStage,string> = {
+ awaiting_requested: "Check school collaboration and update the parent",
  requirements: "Call parent to confirm admission requirements",
  qualified: "Request calls from suitable schools",
  decision: "Record parent feedback and agree the next step",

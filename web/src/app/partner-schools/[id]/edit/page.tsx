@@ -6,7 +6,7 @@ import { getCurrentUser } from "@/lib/current-user";
 import { editPartnerSchool } from "../../actions";
 
 interface School extends RowDataPacket {
-  id: number; name: string; school_type: string; city: string | null; state: string | null;
+  day_parent_delhi_ncr:number; whatsapp_recipient: string | null; id: number; name: string; school_type: string; city: string | null; state: string | null;
   board: string | null; classes_offered: string | null; fee_note: string | null; internal_notes: string | null;
 }
 export default async function EditSchool({ params, searchParams }: {
@@ -19,7 +19,7 @@ export default async function EditSchool({ params, searchParams }: {
   const id = Number(rawId);
   if (!Number.isSafeInteger(id) || id <= 0) notFound();
   const [rows] = await db.execute<School[]>(
-    "SELECT id, name, school_type, city, state, board, classes_offered, fee_note, internal_notes FROM partner_schools WHERE id = ?", [id]
+    "SELECT id, name, school_type, city, state, board, classes_offered, fee_note, internal_notes, whatsapp_recipient, day_parent_delhi_ncr FROM partner_schools WHERE id = ?", [id]
   );
   if (!rows.length) notFound();
   const school = rows[0];
@@ -38,6 +38,8 @@ export default async function EditSchool({ params, searchParams }: {
       <input type="hidden" name="id" value={school.id} />
       {fields.map(([key, label, value, max]) => <label key={key} className="text-sm font-medium">{label}{key === "name" ? " *" : ""}<input name={key} defaultValue={value ?? ""} required={key === "name"} maxLength={max} className={input} /></label>)}
       <label className="text-sm font-medium">School type *<select name="type" defaultValue={school.school_type} required className={input}><option value="day">Day school</option><option value="boarding">Boarding school</option><option value="both">Both</option></select></label>
+      <label className="flex items-start gap-2 rounded-lg bg-blue-50 p-3 text-sm sm:col-span-2"><input type="checkbox" name="dayParentDelhiNcr" value="yes" defaultChecked={Boolean(school.day_parent_delhi_ncr)} className="mt-1"/>I verified this day/both school is in our Delhi NCR service area and eligible for day-school parent referrals. A city must be recorded.</label>
+      <label className="text-sm font-medium sm:col-span-2">Default WhatsApp group / recipient<input name="whatsappRecipient" defaultValue={school.whatsapp_recipient ?? ""} maxLength={255} placeholder="TSA – School admissions group" className={input} /><span className="mt-1 block text-xs text-slate-500">Used for new sharing confirmations. Previous transfer records remain unchanged; counsellors can override the recipient.</span></label>
       <label className="text-sm font-medium sm:col-span-2">Internal notes<textarea name="notes" defaultValue={school.internal_notes ?? ""} rows={4} maxLength={5000} className={input} /></label>
       <button className="rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800 sm:col-span-2">Save changes</button>
     </form>

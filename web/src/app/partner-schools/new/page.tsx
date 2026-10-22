@@ -22,6 +22,8 @@ export default async function NewPartnerSchool({ searchParams }: { searchParams:
       <label className="text-sm font-medium">Board<input name="board" maxLength={120} className={input} /></label>
       <label className="text-sm font-medium">Classes offered<input name="classes" maxLength={255} placeholder="Nursery to Class 12" className={input} /></label>
       <label className="text-sm font-medium">Fee note<input name="fee" maxLength={255} placeholder="Add verified information only" className={input} /></label>
+      <label className="flex items-start gap-2 rounded-lg bg-blue-50 p-3 text-sm sm:col-span-2"><input type="checkbox" name="dayParentDelhiNcr" value="yes" className="mt-1"/>I verified this day/both school is in our Delhi NCR service area and eligible for day-school parent referrals. A city must be recorded.</label>
+      <label className="text-sm font-medium sm:col-span-2">Default WhatsApp group / recipient<input name="whatsappRecipient" maxLength={255} placeholder="Leave blank for TSA - {school name}" className={input} /><span className="mt-1 block text-xs text-slate-500">Leave blank to use TSA - followed by the school name. You can enter a different group name if needed.</span></label>
       <label className="text-sm font-medium sm:col-span-2">Internal notes<textarea name="notes" maxLength={5000} rows={3} className={input} /></label>
       <div className="border-t border-slate-200 pt-5 font-semibold sm:col-span-2">Primary school contact</div>
       <label className="text-sm font-medium">Contact name<input name="contactName" maxLength={160} className={input} /></label>

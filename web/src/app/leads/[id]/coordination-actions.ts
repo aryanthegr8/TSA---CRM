@@ -1,4 +1,6 @@
 "use server";
+import { assertRequestedSchoolSelection, SchoolPreferenceError } from "@/lib/requested-school";
+
 import { redirect, notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import type { RowDataPacket } from "mysql2";
@@ -26,6 +28,7 @@ export async function saveSchoolCoordination(leadId: number, _previous: {message
   for(const id of ids){
    const [rows]=await connection.execute<RowDataPacket[]>("SELECT r.*, ps.name FROM referrals r JOIN partner_schools ps ON ps.id=r.partner_school_id WHERE r.id=? AND r.lead_id=? FOR UPDATE",[id,leadId]);
    const ref=rows[0];if(!ref||['not_proceeding','admitted'].includes(ref.status)){await connection.rollback();return{message:'A school option is closed or unavailable. Refresh.'};}
+   await assertRequestedSchoolSelection(connection,leadId,[Number(ref.partner_school_id)]);
    const contact=read(`contact_${id}`),decision=read(`decision_${id}`),shared=form.get(`shared_${id}`)==='yes',recipient=read(`recipient_${id}`);
    if(!Object.hasOwn(schoolContactOutcomes,contact)||!Object.hasOwn(parentDecisions,decision)||recipient.length>255||(shared&&!ref.sent_at&&!recipient)){await connection.rollback();return{message:'Check school outcomes and enter recipients for newly shared leads.'};}
    if(contact!=='pending'&&!shared&&!ref.sent_at){await connection.rollback();return{message:'Confirm that the lead was shared before recording the school call outcome.'};}
@@ -51,7 +54,7 @@ export async function saveSchoolCoordination(leadId: number, _previous: {message
   if(!Object.hasOwn(actions,nextAction)){await connection.rollback();return{message:'Choose the next action.'};}
   await connection.execute("INSERT INTO tasks (lead_id,owner_id,title,task_type,due_at) VALUES (?,?,?,'call_parent',?)",[leadId,lead.owner_id??user.id,actions[nextAction],dueUtc]);
   await connection.commit();
- }catch(error){await connection.rollback();throw error;}finally{connection.release();}
+ }catch(error){await connection.rollback();if(error instanceof SchoolPreferenceError)return{message:error.message};throw error;}finally{connection.release();}
  revalidatePath('/leads','layout');revalidatePath('/dashboard');revalidatePath('/visits');
  redirect(`/leads/${leadId}?decisionSaved=1&tab=follow-up`);
 }

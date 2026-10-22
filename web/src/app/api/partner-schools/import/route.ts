@@ -1,3 +1,4 @@
+import { defaultSchoolWhatsappRecipient } from "@/lib/school-whatsapp";
 import { NextRequest, NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
@@ -61,9 +62,9 @@ export async function POST(request: NextRequest) {
         );
         if (found.length) { skipped++; continue; }
         const [result] = await connection.execute<ResultSetHeader>(
-          `INSERT INTO partner_schools (name, school_type, city, state, board, classes_offered, fee_note, internal_notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [row.name, row.schoolType, row.city, row.state, row.board, row.classesOffered, row.feeNote, row.internalNotes]
+          `INSERT INTO partner_schools (name, school_type, city, state, board, classes_offered, fee_note, internal_notes, whatsapp_recipient)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [row.name, row.schoolType, row.city, row.state, row.board, row.classesOffered, row.feeNote, row.internalNotes, defaultSchoolWhatsappRecipient(row.name)]
         );
         if (row.contactName) {
           await connection.execute(

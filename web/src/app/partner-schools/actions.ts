@@ -1,5 +1,6 @@
 "use server";
 
+import { schoolWhatsappRecipient } from "@/lib/school-whatsapp";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
@@ -37,17 +38,19 @@ export async function editPartnerSchool(form: FormData) {
   const id = schoolId(form);
   const read = (key: string) => String(form.get(key) ?? "").trim();
   const name = read("name"), type = read("type"), city = read("city"), state = read("state");
+  const whatsappRecipient = read("whatsappRecipient");
+  const ncr=form.get("dayParentDelhiNcr")==="yes"?1:0;
   const board = read("board"), classes = read("classes"), fee = read("fee"), notes = read("notes");
-  if (!name || name.length > 255 || !["day", "boarding", "both"].includes(type) ||
+  if (ncr&&(!["day","both"].includes(type)||!city)||!name || name.length > 255 || !["day", "boarding", "both"].includes(type) ||
       city.length > 120 || state.length > 120 || board.length > 120 ||
-      classes.length > 255 || fee.length > 255 || notes.length > 5000) {
+      whatsappRecipient.length > 255 || classes.length > 255 || fee.length > 255 || notes.length > 5000) {
     redirect(`/partner-schools/${id}/edit?error=invalid`);
   }
   const connection = await db.getConnection();
   let outcome = "saved";
   try {
     await connection.beginTransaction();
-    const [school] = await connection.execute<RowDataPacket[]>("SELECT id FROM partner_schools WHERE id = ? FOR UPDATE", [id]);
+    const [school] = await connection.execute<RowDataPacket[]>("SELECT id, name FROM partner_schools WHERE id = ? FOR UPDATE", [id]);
     if (!school.length) outcome = "missing";
     else {
       const [duplicates] = await connection.execute<RowDataPacket[]>(
@@ -57,8 +60,8 @@ export async function editPartnerSchool(form: FormData) {
       if (duplicates.length) outcome = "duplicate";
       else await connection.execute(
         `UPDATE partner_schools SET name = ?, school_type = ?, city = ?, state = ?, board = ?,
-         classes_offered = ?, fee_note = ?, internal_notes = ? WHERE id = ?`,
-        [name, type, city || null, state || null, board || null, classes || null, fee || null, notes || null, id]
+         classes_offered = ?, fee_note = ?, internal_notes = ?, whatsapp_recipient = ?, day_parent_delhi_ncr = ? WHERE id = ?`,
+        [name, type, city || null, state || null, board || null, classes || null, fee || null, notes || null, schoolWhatsappRecipient(name, whatsappRecipient, school[0].name), ncr, id]
       );
     }
     await connection.commit();

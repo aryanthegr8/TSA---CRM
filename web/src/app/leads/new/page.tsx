@@ -1,4 +1,5 @@
 import Link from "next/link";
+import {leadInboxPath} from "@/lib/lead-categories";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/current-user";
 import { createLead } from "./actions";
@@ -6,13 +7,15 @@ import { createLead } from "./actions";
 export default async function NewLeadPage({ searchParams }: { searchParams: Promise<{ error?: string; category?: string }> }) {
   if (!(await getCurrentUser())) redirect("/login");
   const { error, category: rawCategory } = await searchParams;
-  const category = ["school_owner","boarding_parent"].includes(rawCategory ?? "") ? rawCategory! : "general";
+  const category = ["school_owner","boarding_parent","day_parent"].includes(rawCategory ?? "") ? rawCategory! : "general";
+  const dayParent = category === "day_parent";
   const schoolOwner = category === "school_owner";
   const input = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100";
   return <main className="min-h-screen bg-slate-50 px-5 py-9 text-slate-900"><div className="mx-auto max-w-2xl">
-    <Link href="/leads" className="text-sm text-blue-700 hover:underline">← Lead Inbox</Link>
+    <Link href={leadInboxPath(category)} className="text-sm text-blue-700 hover:underline">← Lead Inbox</Link>
     <h1 className="mt-3 text-3xl font-bold">{schoolOwner ? "Add school partnership enquiry" : "Add an admission enquiry"}</h1>
     <p className="mt-2 text-slate-600">This creates a lead assigned to you with its first follow-up. Enter a phone number with country code, such as +91…</p>
+    {dayParent && <p className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">Day-school admission enquiry — Delhi NCR only. School selection is limited to manager-verified Delhi NCR partners.</p>}
     {error && <p role="alert" className="mt-5 rounded-lg bg-red-50 p-3 text-red-700">{error === "due" ? "Choose a follow-up time in the future." : "Check the required fields, phone number and admission year."}</p>}
     <form action={createLead} className="mt-7 grid gap-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm sm:grid-cols-2">
       <input type="hidden" name="category" value={category} />
@@ -23,7 +26,7 @@ export default async function NewLeadPage({ searchParams }: { searchParams: Prom
       <label className="text-sm font-medium">Student name<input name="student" maxLength={160} className={input} /></label>
       <label className="text-sm font-medium">Class sought<input name="classSought" placeholder="Class 6" maxLength={40} className={input} /></label>
       <label className="text-sm font-medium">Admission year <span className="text-red-700">*</span><input name="admissionYear" type="number" min="2020" max="2099" defaultValue={new Date().getFullYear()} required className={input} /></label>
-      <label className="text-sm font-medium">School type <span className="text-red-700">*</span><select name="schoolType" defaultValue="undecided" className={input}><option value="undecided">Undecided</option><option value="day">Day school</option><option value="boarding">Boarding school</option></select></label>
+      <label className="text-sm font-medium">School type <span className="text-red-700">*</span><select name="schoolType" defaultValue={dayParent ? "day" : "undecided"} className={input}>{!dayParent && <option value="undecided">Undecided</option>}<option value="day">Day school</option>{!dayParent && <option value="boarding">Boarding school</option>}</select></label>
       </>}
       {schoolOwner && <input type="hidden" name="schoolType" value="boarding" />}
       <label className="text-sm font-medium">{schoolOwner ? "School location" : "Preferred location"}<input name="location" placeholder="Dehradun, Delhi…" maxLength={255} className={input} /></label>

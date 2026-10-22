@@ -15,7 +15,7 @@ export async function bulkAssignLeads(_previous: { message: string; ok: boolean 
   const ownerId = Number(form.get("ownerId"));
   const category = String(form.get("category"));
   if (!rawIds.length || rawIds.length > 50 || ids.some(id => !Number.isSafeInteger(id) || id <= 0) ||
-      !Number.isSafeInteger(ownerId) || ownerId <= 0 || !["boarding_parent", "school_owner", "general"].includes(category)) {
+      !Number.isSafeInteger(ownerId) || ownerId <= 0 || !["boarding_parent", "day_parent", "school_owner", "general"].includes(category)) {
     return { message: "Select 1–50 leads and an active counsellor.", ok: false };
   }
   const connection = await db.getConnection();

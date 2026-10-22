@@ -1,4 +1,5 @@
 "use server";
+import {defaultSchoolWhatsappRecipient} from "@/lib/school-whatsapp";
 import {redirect,notFound} from 'next/navigation';
 import {revalidatePath} from 'next/cache';
 import type {RowDataPacket,ResultSetHeader} from 'mysql2';
@@ -58,7 +59,7 @@ export async function savePartnership(id:number,_previous:{message:string},form:
     if(createNew){
      const [duplicates]=await connection.execute<RowDataPacket[]>('SELECT id FROM partner_schools WHERE name=? AND city <=> ? AND state <=> ? FOR UPDATE',[record.school_name,record.city,record.state]);
      if(duplicates.length){await connection.rollback();return{message:'This school already exists. Select its existing partner-school record.'};}
-      const [result]=await connection.execute<ResultSetHeader>('INSERT INTO partner_schools (name,school_type,city,state,is_active) VALUES (?,?,?,?,1)',[record.school_name,record.school_type,record.city,record.state]);schoolId=result.insertId;
+      const [result]=await connection.execute<ResultSetHeader>('INSERT INTO partner_schools (name,school_type,city,state,is_active,whatsapp_recipient) VALUES (?,?,?,?,1,?)',[record.school_name,record.school_type,record.city,record.state,defaultSchoolWhatsappRecipient(record.school_name)]);schoolId=result.insertId;
     }else{
      if(!Number.isSafeInteger(schoolId)||schoolId<=0){await connection.rollback();return{message:'Choose an existing partner school or create a new one.'};}
      const [schools]=await connection.execute<RowDataPacket[]>('SELECT id, name, city, state, is_active FROM partner_schools WHERE id=? FOR UPDATE',[schoolId]);
