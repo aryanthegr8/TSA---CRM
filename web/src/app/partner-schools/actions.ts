@@ -73,3 +73,96 @@ export async function editPartnerSchool(form: FormData) {
   refreshSchools();
   redirect(`/partner-schools?notice=${outcome}`);
 }
+
+/** Archive/restore only the selected schools on the currently visible page. */
+export async function bulkSetSchoolActive(form: FormData) {
+  await requireManager();
+  const raw = form.getAll("schoolId").map(String);
+  const ids = [...new Set(raw.map(Number))];
+  if (!ids.length || ids.length > 100 || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new Error("Select between 1 and 100 valid schools.");
+  }
+  const active = String(form.get("active"));
+  if (active !== "0" && active !== "1") throw new Error("Invalid school status");
+  if (form.get("confirmBulk") !== "yes") throw new Error("Confirmation required");
+  const placeholders = ids.map(() => "?").join(",");
+  await db.execute(
+    `UPDATE partner_schools SET is_active = ? WHERE id IN (${placeholders})`,
+    [Number(active), ...ids]
+  );
+  refreshSchools();
+  redirect(`/partner-schools?status=${active === "1" ? "active" : "archived"}&notice=${active === "1" ? "bulk_restored" : "bulk_archived"}`);
+}
+
+
+/** Permanently remove archived schools and their known test data. All-or-nothing. */
+async function deleteArchivedSchoolIds(ids: number[]) {
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const placeholders = ids.map(() => "?").join(",");
+    const [schools] = await connection.execute<RowDataPacket[]>(
+      `SELECT id, is_active FROM partner_schools WHERE id IN (${placeholders}) FOR UPDATE`, ids
+    );
+    if (schools.length !== ids.length || schools.some(s => Number(s.is_active) !== 0)) {
+      throw new Error("All selected schools must exist and be archived. Refresh and try again.");
+    }
+    // Remove children of referrals before their parent referrals.
+    // Only rows linked to referrals belonging to selected schools are affected.
+    for (const table of ["admission_conversions", "lead_activities", "school_visits", "tasks"]) {
+      await connection.execute(
+        `DELETE FROM ${table} WHERE referral_id IN (
+           SELECT id FROM referrals WHERE partner_school_id IN (${placeholders})
+         )`, ids
+      );
+    }
+    // Referrals reference school_contacts, so delete referrals first.
+    await connection.execute(
+      `DELETE FROM referrals WHERE partner_school_id IN (${placeholders})`, ids
+    );
+    for (const table of ["school_contacts", "school_partnerships"]) {
+      await connection.execute(
+        `DELETE FROM ${table} WHERE partner_school_id IN (${placeholders})`, ids
+      );
+    }
+    // Boarding targets can have child requests. Do not delete those requests
+    // implicitly; the FK will block and roll back if such records exist.
+    await connection.execute(
+      `DELETE FROM boarding_school_targets WHERE existing_partner_school_id IN (${placeholders})`, ids
+    );
+    const [deleted] = await connection.execute<ResultSetHeader>(
+      `DELETE FROM partner_schools WHERE id IN (${placeholders}) AND is_active = 0`, ids
+    );
+    if (deleted.affectedRows !== ids.length) throw new Error("School deletion count mismatch; rolled back.");
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function permanentlyDeleteArchivedSchool(form: FormData) {
+  await requireManager();
+  const id = schoolId(form);
+  if (form.get("confirmDelete") !== "yes") throw new Error("Deletion confirmation required.");
+  await deleteArchivedSchoolIds([id]);
+  refreshSchools();
+  redirect("/partner-schools?status=archived&notice=permanently_deleted");
+}
+
+export async function bulkPermanentlyDeleteArchivedSchools(form: FormData) {
+  await requireManager();
+  const raw = form.getAll("schoolId").map(String);
+  const ids = [...new Set(raw.map(Number))];
+  if (!ids.length || ids.length > 100 || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new Error("Select between 1 and 100 valid schools.");
+  }
+  if (form.get("confirmBulk") !== "yes" || form.get("operation") !== "delete") {
+    throw new Error("Deletion confirmation required.");
+  }
+  await deleteArchivedSchoolIds(ids);
+  refreshSchools();
+  redirect("/partner-schools?status=archived&notice=bulk_permanently_deleted");
+}

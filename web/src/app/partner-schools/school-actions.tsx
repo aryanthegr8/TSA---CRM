@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useFormStatus } from "react-dom";
-import { setSchoolActive } from "./actions";
+import { setSchoolActive, permanentlyDeleteArchivedSchool } from "./actions";
 
 function Submit({ active }: { active: boolean }) {
   const { pending } = useFormStatus();
-  return <button disabled={pending} className="font-medium text-red-700 hover:underline disabled:opacity-50">{pending ? "Saving…" : active ? "Delete" : "Restore"}</button>;
+  return <button disabled={pending} className="font-medium text-red-700 hover:underline disabled:opacity-50">{pending ? "Saving…" : active ? "Archive" : "Restore"}</button>;
 }
 export default function SchoolActions({ id, name, active }: { id: number; name: string; active: boolean }) {
   return <div className="flex items-center gap-4">
@@ -20,5 +20,12 @@ export default function SchoolActions({ id, name, active }: { id: number; name: 
       <input type="hidden" name="active" value={active ? "0" : "1"} />
       <Submit active={active} />
     </form>
+    {!active && <form action={permanentlyDeleteArchivedSchool} onSubmit={event => {
+      if (!window.confirm(`PERMANENTLY DELETE ${name}? Its referrals, contacts, partnerships and boarding targets will also be deleted. This cannot be undone.`)) event.preventDefault();
+    }}>
+      <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="confirmDelete" value="yes" />
+      <button type="submit" className="font-semibold text-red-800 hover:underline">Delete permanently</button>
+    </form>}
   </div>;
 }
