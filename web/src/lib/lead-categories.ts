@@ -9,7 +9,8 @@ export type LeadCategory = keyof typeof leadCategories;
 
 export const metaForms: Record<string, { category: LeadCategory; name: string; schoolType?: "day" | "boarding" }> = {
   "1512768827576448": { category: "boarding_parent", name: "Boarding parent 05/09/2026", schoolType: "boarding" },
-  "998020903326884": { category: "school_owner", name: "SCHOOL ADMISSION CITY UPDATE-copy", schoolType: "day" },
+  // "998020903326884": { category: "school_owner", name: "SCHOOL ADMISSION CITY UPDATE-copy", schoolType: "day" },
+  "2336982797154535": { category: "school_owner", name: "SCHOOL ADMISSION", schoolType: "day" },
   "1413460333859333": { category: "school_owner", name: "Residential school city update", schoolType: "boarding" },
 };
 
