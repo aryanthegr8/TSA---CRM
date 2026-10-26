@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
+import CrmNavigation from "@/components/crm-navigation";
 
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
@@ -230,6 +231,10 @@ export default async function DashboardPage() {
           </form>
         </div>
       </header>
+      <CrmNavigation
+        role={user.role}
+        department={user.department}
+      />
 
       <div className="mx-auto max-w-7xl px-5 py-10">
         <div>
