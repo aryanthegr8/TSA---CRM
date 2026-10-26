@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
+import { canOwnCategory } from "@/lib/departments";
 import { schoolContactOutcomes, parentDecisions } from "@/lib/school-coordination";
 export async function saveSchoolCoordination(leadId: number, _previous: {message:string}, form: FormData) {
  const user=await getCurrentUser();if(!user)redirect('/login');
@@ -18,11 +19,22 @@ export async function saveSchoolCoordination(leadId: number, _previous: {message
  if(!ids.length||ids.length>100||ids.some(id=>!Number.isSafeInteger(id)||id<=0)||!note||note.length>2000||Number.isNaN(date.getTime())||date.getTime()<=Date.now())return{message:'Enter notes and a future follow-up in India time.'};
  if(new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(date).replace(' ','T')!==due)return{message:'Enter a valid follow-up date.'};
  const dueUtc=date.toISOString().slice(0,23).replace('T',' ');
+ const nextAction=read('nextAction');
+ const actions:Record<string,string>={school_calls:'Confirm school calls and collect parent feedback',parent_feedback:'Discuss school options with parent',visit:'Arrange requested school visit',admission:'Discuss admission readiness with parent'};
+ if(!Object.hasOwn(actions,nextAction))return{message:'Choose the next action.'};
  const connection=await db.getConnection();
  try {
   await connection.beginTransaction();
   const [leads]=await connection.execute<RowDataPacket[]>("SELECT owner_id, status, enquiry_category, (SELECT COUNT(*) FROM lead_activities ca WHERE ca.lead_id=leads.id AND ca.activity_type='call') AS call_count FROM leads WHERE id = ? FOR UPDATE",[leadId]);
-  const lead=leads[0];if(!lead||lead.enquiry_category==='school_owner'||user.role==='counsellor'&&Number(lead.owner_id)!==user.id)notFound();
+   const lead=leads[0];
+   if (
+     !lead ||
+     !["day_parent", "boarding_parent"].includes(lead.enquiry_category) ||
+     (user.role === "counsellor" && Number(lead.owner_id) !== user.id) ||
+     !canOwnCategory(user.role, user.department, lead.enquiry_category)
+   ) {
+     notFound();
+   }
   if(['lost','admitted'].includes(lead.status)||read('expectedCallCount')===''||Number(read('expectedCallCount'))!==Number(lead.call_count)){await connection.rollback();return{message:'This lead changed or closed. Refresh before saving.'};}
   let summary='';
   for(const id of ids){
@@ -49,12 +61,15 @@ export async function saveSchoolCoordination(leadId: number, _previous: {message
   // One conversation is one call record, regardless of the number of school rows.
   await connection.execute("INSERT INTO lead_activities (lead_id,actor_id,activity_type,outcome,note,occurred_at) VALUES (?,?,?,'School coordination updated',?,UTC_TIMESTAMP(3))",[leadId,user.id,method,summary+note]);
   await connection.execute("UPDATE tasks SET completed_at=UTC_TIMESTAMP(3), outcome=? WHERE lead_id=? AND completed_at IS NULL AND task_type='call_parent'",[note,leadId]);
-  const nextAction=read('nextAction');
-  const actions:Record<string,string>={school_calls:'Confirm school calls and collect parent feedback',parent_feedback:'Discuss school options with parent',visit:'Arrange requested school visit',admission:'Discuss admission readiness with parent'};
-  if(!Object.hasOwn(actions,nextAction)){await connection.rollback();return{message:'Choose the next action.'};}
   await connection.execute("INSERT INTO tasks (lead_id,owner_id,title,task_type,due_at) VALUES (?,?,?,'call_parent',?)",[leadId,lead.owner_id??user.id,actions[nextAction],dueUtc]);
   await connection.commit();
- }catch(error){await connection.rollback();if(error instanceof SchoolPreferenceError)return{message:error.message};throw error;}finally{connection.release();}
+ } catch(error) {
+  await connection.rollback();
+  if(error instanceof SchoolPreferenceError)return{message:error.message};
+  throw error;
+ } finally {
+  connection.release();
+ }
  revalidatePath('/leads','layout');revalidatePath('/dashboard');revalidatePath('/visits');
  redirect(`/leads/${leadId}?decisionSaved=1&tab=follow-up`);
 }

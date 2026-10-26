@@ -8,20 +8,53 @@ import { revalidatePath } from "next/cache";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
+import { canOwnCategory } from "@/lib/departments";
+
+class ReferralActionError extends Error {
+  constructor(
+    public readonly destination: string
+  ) {
+    super("Referral action validation failed");
+    this.name = "ReferralActionError";
+  }
+}
+
+const failReferral = (destination: string): never => {
+  throw new ReferralActionError(destination);
+};
 
 type LeadRow = RowDataPacket & { owner_id: number | null; school_type: string; status: string; enquiry_category: string };
 type SchoolRow = RowDataPacket & { school_type: string };
 type ReferralRow = RowDataPacket & { id: number; status: string; partner_school_id: number };
 type TaskRow = RowDataPacket & { id: number };
 import { referralTransitions as transitions, transferChannels } from "@/lib/referral-workflow";
-const leadAccess = async (leadId: number, userId: number, role: string, connection: import("mysql2/promise").PoolConnection) => {
+const leadAccess = async (
+  leadId: number,
+  userId: number,
+  role: string,
+  department: "school_partnerships" | "parent_admissions" | null,
+  connection: import("mysql2/promise").PoolConnection
+) => {
   const [rows] = await connection.execute<LeadRow[]>(
-    "SELECT owner_id, school_type, status, enquiry_category FROM leads WHERE id = ? FOR UPDATE", [leadId]
+    "SELECT owner_id, school_type, status, enquiry_category FROM leads WHERE id = ? FOR UPDATE",
+    [leadId]
   );
+
   const lead = rows[0];
-  if (!lead || (role === "counsellor" && lead.owner_id !== userId)) notFound();
-  if (lead.enquiry_category === "school_owner") notFound();
-  if (lead.status === "admitted" || lead.status === "lost") redirect(`/leads/${leadId}?referralError=closed`);
+
+  if (
+    !lead ||
+    !["day_parent", "boarding_parent"].includes(lead.enquiry_category) ||
+    (role === "counsellor" && Number(lead.owner_id) !== userId) ||
+    !canOwnCategory(role, department, lead.enquiry_category)
+  ) {
+    notFound();
+  }
+
+  if (lead.status === "admitted" || lead.status === "lost") {
+  failReferral(`/leads/${leadId}?referralError=closed`);
+  }
+
   return lead;
 };
 const allowedId = (id: number) => Number.isSafeInteger(id) && id > 0;
@@ -34,9 +67,10 @@ export async function shortlistSchool(leadId: number, schoolId: number, form: Fo
   const reason = String(form.get("reason") ?? "").trim();
   if (reason.length > 1000) redirect(`/leads/${leadId}/refer?error=reason`);
   const connection = await db.getConnection();
+  let destination = `/leads/${leadId}?tab=schools&referralSaved=1`;
   try {
     await connection.beginTransaction();
-    const lead = await leadAccess(leadId, user.id, user.role, connection);
+    const lead = await leadAccess(leadId, user.id, user.role, user.department, connection)
     await assertRequestedSchoolSelection(connection,leadId,[schoolId]);
     const [schools] = await connection.execute<SchoolRow[]>(
       "SELECT school_type FROM partner_schools WHERE id = ? AND is_active = 1", [schoolId]
@@ -47,8 +81,7 @@ export async function shortlistSchool(leadId: number, schoolId: number, form: Fo
       "SELECT id FROM referrals WHERE lead_id = ? AND partner_school_id = ? FOR UPDATE", [leadId, schoolId]
     );
     if (existing.length) {
-      await connection.commit();
-      redirect(`/leads/${leadId}?referralError=duplicate`);
+      failReferral(`/leads/${leadId}?referralError=duplicate`);
     }
     const [result] = await connection.execute<ResultSetHeader>(
       "INSERT INTO referrals (lead_id, partner_school_id, counsellor_id, reason_for_match) VALUES (?, ?, ?, ?)",
@@ -60,12 +93,21 @@ export async function shortlistSchool(leadId: number, schoolId: number, form: Fo
     );
     await connection.commit();
   } catch (error) {
-    await connection.rollback();
-    if(error instanceof SchoolPreferenceError)redirect(`/leads/${leadId}?tab=schools&referralError=preference`);
-    throw error;
-  } finally { connection.release(); }
-  refresh(leadId);
-  redirect(`/leads/${leadId}?tab=schools&referralSaved=1`);
+      await connection.rollback();
+
+      if (error instanceof ReferralActionError) {
+        destination = error.destination;
+      } else if (error instanceof SchoolPreferenceError) {
+        destination = `/leads/${leadId}?tab=schools&referralError=preference`;
+      } else {
+          throw error;
+      }
+    } finally {
+        connection.release();
+      }
+
+  if (destination.includes("referralSaved=1")) refresh(leadId);
+  redirect(destination);
 }
 
 export async function updateReferral(leadId: number, referralId: number, form: FormData) {
@@ -102,20 +144,21 @@ export async function updateReferral(leadId: number, referralId: number, form: F
     redirect(`/leads/${leadId}?referralError=due`);
   }
   const connection = await db.getConnection();
+  let destination = `/leads/${leadId}?tab=schools&referralSaved=1`;
   try {
     await connection.beginTransaction();
-    const lead = await leadAccess(leadId, user.id, user.role, connection);
+    const lead = await leadAccess(leadId, user.id, user.role, user.department, connection)
     const [refs] = await connection.execute<ReferralRow[]>(
       "SELECT id, status, partner_school_id FROM referrals WHERE id = ? AND lead_id = ? FOR UPDATE", [referralId, leadId]
     );
     const referral = refs[0];
-    if (!referral || !transitions[referral.status]?.includes(status)) redirect(`/leads/${leadId}?referralError=transition`);
+    if (!referral || !transitions[referral.status]?.includes(status)) failReferral(`/leads/${leadId}?referralError=transition`);
     await assertRequestedSchoolSelection(connection,leadId,[Number(referral.partner_school_id)]);
     if (contactId) {
       const [contacts] = await connection.execute<RowDataPacket[]>(
         "SELECT id FROM school_contacts WHERE id = ? AND partner_school_id = ? AND is_active = 1", [contactId, referral.partner_school_id]
       );
-      if (!contacts.length) redirect(`/leads/${leadId}?referralError=contact`);
+      if (!contacts.length) failReferral(`/leads/${leadId}?referralError=contact`);
     }
     await connection.execute(
       `UPDATE referrals SET status = ?, school_contact_id = COALESCE(?, school_contact_id),
@@ -167,12 +210,22 @@ export async function updateReferral(leadId: number, referralId: number, form: F
     await connection.commit();
   } catch (error) {
     await connection.rollback();
-    if(error instanceof SchoolPreferenceError)redirect(`/leads/${leadId}?tab=schools&referralError=preference`);
-    throw error;
-  } finally { connection.release(); }
-  refresh(leadId);
-  revalidatePath("/leads");
-  redirect(`/leads/${leadId}?tab=schools&referralSaved=1`);
+    if (error instanceof ReferralActionError) {
+      destination = error.destination;
+    } else if (error instanceof SchoolPreferenceError) {
+      destination = `/leads/${leadId}?tab=schools&referralError=preference`;
+    } else {
+      throw error;
+    }
+  } finally {
+    connection.release();
+  }
+
+  if (destination.includes("referralSaved=1")) {
+    refresh(leadId);
+    revalidatePath("/leads");
+  }
+  redirect(destination);
 }
 
 export async function shortlistSchools(leadId: number, _previous: { message: string }, form: FormData) {
@@ -187,7 +240,7 @@ export async function shortlistSchools(leadId: number, _previous: { message: str
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
-    const lead = await leadAccess(leadId, user.id, user.role, connection);
+    const lead = await leadAccess(leadId, user.id, user.role, user.department, connection)
     await assertRequestedSchoolSelection(connection,leadId,ids);
     const [schools] = await connection.execute<(SchoolRow & { id: number })[]>(
       `SELECT id, school_type FROM partner_schools WHERE id IN (${ids.map(() => "?").join(",")}) AND is_active = 1 ORDER BY id FOR UPDATE`, ids
@@ -225,16 +278,23 @@ export async function reopenSchoolOption(leadId:number,referralId:number,form:Fo
  const due=futureIndiaTime(String(form.get('followUp')??''));
  if(!note||note.length>2000||!due)redirect(`/leads/${leadId}?tab=schools&referralError=due`);
  const connection=await db.getConnection();
+ let destination=`/leads/${leadId}?tab=schools&referralSaved=1`;
  try{
-  await connection.beginTransaction();const lead=await leadAccess(leadId,user.id,user.role,connection);
+  await connection.beginTransaction();const lead=await leadAccess(leadId, user.id, user.role, user.department, connection)
   const[refs]=await connection.execute<RowDataPacket[]>("SELECT r.*,ps.school_type,ps.is_active FROM referrals r JOIN partner_schools ps ON ps.id=r.partner_school_id WHERE r.id=? AND r.lead_id=? FOR UPDATE",[referralId,leadId]);
-  const ref=refs[0];if(!ref||ref.status!=='not_proceeding'||!ref.is_active||(lead.school_type!=='undecided'&&ref.school_type!=='both'&&ref.school_type!==lead.school_type))redirect(`/leads/${leadId}?tab=schools&referralError=transition`);
+  const ref=refs[0];if(!ref||ref.status!=='not_proceeding'||!ref.is_active||(lead.school_type!=='undecided'&&ref.school_type!=='both'&&ref.school_type!==lead.school_type))failReferral(`/leads/${leadId}?tab=schools&referralError=transition`);
   await assertRequestedSchoolSelection(connection,leadId,[Number(ref.partner_school_id)]);
   await connection.execute("UPDATE referrals SET status=CASE WHEN sent_at IS NULL THEN 'shortlisted' ELSE 'sent_to_school' END,closed_reason=NULL,parent_decision='awaiting_discussion',school_contact_outcome='pending' WHERE id=?",[referralId]);
   await connection.execute("INSERT INTO lead_activities (lead_id,referral_id,actor_id,activity_type,outcome,note,occurred_at) VALUES (?,?,?,'referral_update','School option reopened',?,UTC_TIMESTAMP(3))",[leadId,referralId,user.id,`${note}. Previous sharing evidence retained. No message sent by reopening.`]);
   await connection.execute("UPDATE tasks SET completed_at=UTC_TIMESTAMP(3),outcome='School option reopened; next parent action rescheduled' WHERE lead_id=? AND task_type='call_parent' AND completed_at IS NULL",[leadId]);
   await connection.execute("INSERT INTO tasks (lead_id,referral_id,owner_id,title,task_type,due_at) VALUES (?,?,?,'Discuss reopened school option with parent','call_parent',?)",[leadId,referralId,lead.owner_id??user.id,due]);
   await connection.commit();
- }catch(error){await connection.rollback();if(error instanceof SchoolPreferenceError)redirect(`/leads/${leadId}?tab=schools&referralError=preference`);throw error;}finally{connection.release();}
- refresh(leadId);redirect(`/leads/${leadId}?tab=schools&referralSaved=1`);
+  }catch(error){
+   await connection.rollback();
+   if(error instanceof ReferralActionError)destination=error.destination;
+   else if(error instanceof SchoolPreferenceError)destination=`/leads/${leadId}?tab=schools&referralError=preference`;
+   else throw error;
+  }finally{connection.release();}
+  if(destination.includes("referralSaved=1"))refresh(leadId);
+  redirect(destination);
 }

@@ -1,5 +1,6 @@
+import { leadDepartment, type CrmDepartment } from "@/lib/departments";
 import {activeLeadSql,incomingLeadSql,openLeadTaskSql,dayBounds,indiaDateKey,validDay,singleValue,type SearchValues} from './lead-workspace';
-export type WorkspaceUser={id:number;role:string};
+export type WorkspaceUser={id:number;role:string;department:CrmDepartment|null};
 export type Scope={where:string[];args:(string|number)[]};
 export const workspaceFrom='FROM leads l JOIN families f ON f.id=l.family_id LEFT JOIN school_partnerships sp ON sp.lead_id=l.id LEFT JOIN crm_users u ON u.id=l.owner_id';
 export const taskFrom=`FROM tasks t JOIN leads l ON l.id=t.lead_id JOIN families f ON f.id=l.family_id
@@ -15,7 +16,11 @@ export function inboxQueueScope(view:string):string{
 }
 export function inboxAccessScope(user:WorkspaceUser,category:string,owner:string):Scope{
  const where=['l.enquiry_category=?'];const args:(string|number)[]=[category];
- if(user.role==='counsellor'){where.push('l.owner_id=?');args.push(user.id);}
+ if(user.role==='counsellor'){
+  where.push('l.owner_id=?');args.push(user.id);
+  // Deny missing/mismatched departments even for leads previously assigned.
+  if(leadDepartment(category)!==user.department || user.department===null) where.push('1=0');
+ }
  else if(owner==='unassigned')where.push('l.owner_id IS NULL');
  else if(/^\d+$/.test(owner)&&Number.isSafeInteger(Number(owner))&&Number(owner)>0){where.push('l.owner_id=?');args.push(Number(owner));}
  return{where,args};
@@ -33,7 +38,12 @@ export function taskScope(user:WorkspaceUser,filters:ReturnType<typeof parseTask
  const where=['t.completed_at IS NULL',`(${activeLeadSql})`,"(t.referral_id IS NULL OR r.status NOT IN ('not_proceeding','admitted'))"];
  const args:(string|number)[]=[];
  // Require both ownership checks: old/mismatched task assignment must not expose another lead.
- if(user.role==='counsellor'){where.push('t.owner_id=?','l.owner_id=?');args.push(user.id,user.id);}
+ if(user.role==='counsellor'){
+  where.push('t.owner_id=?','l.owner_id=?');args.push(user.id,user.id);
+  if(user.department==='school_partnerships') where.push("l.enquiry_category='school_owner'");
+  else if(user.department==='parent_admissions') where.push("l.enquiry_category IN ('day_parent','boarding_parent')");
+  else where.push('1=0'); // Unassigned/unknown department: deny access.
+ }
  else if(filters.owner){where.push('t.owner_id=?');args.push(Number(filters.owner));}
  if(filters.category){where.push('l.enquiry_category=?');args.push(filters.category);}
  if(filters.taskType){where.push('t.task_type=?');args.push(filters.taskType);}

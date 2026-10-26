@@ -6,10 +6,20 @@ import {getCurrentUser} from '@/lib/current-user';
 import {partnershipStages,partnershipStageOrder,partnershipGuidance,type PartnershipStage} from '@/lib/school-partnership';
 import SchoolFollowUpForm from "./follow-up-form";
 import PartnershipForm from './partnership-form';
+import { canOwnCategory } from "@/lib/departments";
 const stamp=(date:Date)=>new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date(date));
 export default async function SchoolOwnerPage({params,searchParams}:{params:Promise<{id:string}>;searchParams:Promise<{tab?:string;notice?:string;action?:string}>}){
  const user=await getCurrentUser();if(!user)redirect('/login');const id=Number((await params).id);if(!Number.isSafeInteger(id)||id<=0)notFound();
  const [leads]=await db.execute<RowDataPacket[]>(`SELECT l.*,f.parent_name,f.primary_phone,f.email,u.name AS owner_name FROM leads l JOIN families f ON f.id=l.family_id LEFT JOIN crm_users u ON u.id=l.owner_id WHERE l.id=? AND l.enquiry_category='school_owner' ${user.role==='counsellor'?'AND l.owner_id=?':''}`,user.role==='counsellor'?[id,user.id]:[id]);const lead=leads[0];if(!lead)notFound();
+ if (
+  !canOwnCategory(
+    user.role,
+    user.department,
+    lead.enquiry_category
+  )
+    ) {
+    notFound();
+}
  const [records]=await db.execute<RowDataPacket[]>('SELECT * FROM school_partnerships WHERE lead_id=?',[id]);
  const record=records[0]??{lead_id:id,revision:0,stage:lead.status==='lost'?'closed':'new',school_type:'boarding',contact_name:lead.parent_name,contact_phone:lead.primary_phone,contact_email:lead.email};
  const [[tasks],[history],[documents],[schools]]=await Promise.all([

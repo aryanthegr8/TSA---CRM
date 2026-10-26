@@ -5,6 +5,13 @@ import { revalidatePath } from "next/cache";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
+import { canOwnCategory } from "@/lib/departments";
+
+class LeadUpdateExit extends Error {
+  constructor(public readonly reason: "not_found" | "closed") {
+    super(reason);
+  }
+}
 
 type LeadLock = RowDataPacket & { owner_id: number | null; status: string; enquiry_category: string };
 type TaskLock = RowDataPacket & { id: number };
@@ -33,14 +40,27 @@ export async function recordLeadUpdate(leadId: number, form: FormData) {
   }
 
   const connection = await db.getConnection();
+  let exitReason: "not_found" | "closed" | null = null;
+  let transactionStarted = false;
   try {
     await connection.beginTransaction();
+    transactionStarted = true;
     const [leads] = await connection.execute<LeadLock[]>(
       "SELECT owner_id, status, enquiry_category FROM leads WHERE id = ? FOR UPDATE", [leadId]
     );
     const lead = leads[0];
-    if (!lead || (user.role === "counsellor" && lead.owner_id !== user.id)) notFound();
-    if (lead.status === "admitted" || lead.status === "lost") redirect(`/leads/${leadId}?error=closed`);
+    if (
+      !lead ||
+      (user.role === "counsellor" && lead.owner_id !== user.id) ||
+      !canOwnCategory(
+        user.role,
+        user.department,
+        lead.enquiry_category
+      )
+    ) {
+      throw new LeadUpdateExit("not_found");
+    }
+    if (lead.status === "admitted" || lead.status === "lost") throw new LeadUpdateExit("closed");
 
     const [tasks] = await connection.execute<TaskLock[]>(
       "SELECT id FROM tasks WHERE lead_id = ? AND referral_id IS NULL AND completed_at IS NULL ORDER BY due_at, id LIMIT 1 FOR UPDATE", [leadId]
@@ -75,12 +95,20 @@ export async function recordLeadUpdate(leadId: number, form: FormData) {
       );
     }
     await connection.commit();
+    transactionStarted = false;
   } catch (error) {
-    await connection.rollback();
-    throw error;
+    if (transactionStarted) await connection.rollback();
+    if (error instanceof LeadUpdateExit) {
+      exitReason = error.reason;
+    } else {
+      throw error;
+    }
   } finally {
     connection.release();
   }
+
+  if (exitReason === "not_found") notFound();
+  if (exitReason === "closed") redirect(`/leads/${leadId}?error=closed`);
   revalidatePath(`/leads/${leadId}`);
   revalidatePath("/leads");
   revalidatePath("/leads/boarding-parents");

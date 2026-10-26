@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
+import { canOwnCategory } from "@/lib/departments";
 
 const field = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 const sources = new Set(["website", "meta_form", "whatsapp", "phone", "referral", "walk_in", "other"]);
@@ -13,7 +14,14 @@ export async function createLead(form: FormData) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const category = ["school_owner","boarding_parent","day_parent"].includes(field(form,"category")) ? field(form,"category") : "general";
+  const requestedCategory = field(form, "category");
+  if (!["school_owner", "boarding_parent", "day_parent", "general"].includes(requestedCategory)) {
+    redirect("/leads/new?error=category");
+  }
+  const category = requestedCategory;
+  if (!canOwnCategory(user.role, user.department, category)) {
+    redirect("/leads/new?error=forbidden");
+  }
   const schoolOwner = category === "school_owner";
   const errorPath = `/leads/new?category=${category}&error=`;
   const phone = field(form, "phone").replace(/[\s()-]/g, "");

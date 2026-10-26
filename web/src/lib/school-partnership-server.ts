@@ -3,9 +3,25 @@ import type {PoolConnection} from 'mysql2/promise';
 import type {RowDataPacket} from 'mysql2';
 import {notFound} from 'next/navigation';
 import {getCurrentUser} from '@/lib/current-user';
+import { canOwnCategory } from "@/lib/departments";
 export async function lockSchoolLead(connection:PoolConnection,id:number,user:NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>){
  const [leads]=await connection.execute<RowDataPacket[]>("SELECT l.*,f.parent_name,f.primary_phone,f.email FROM leads l JOIN families f ON f.id=l.family_id WHERE l.id=? FOR UPDATE",[id]);
- const lead=leads[0];if(!lead||lead.enquiry_category!=='school_owner'||user.role==='counsellor'&&Number(lead.owner_id)!==user.id)notFound();
+//  const lead=leads[0];if(!lead||lead.enquiry_category!=='school_owner'||user.role==='counsellor'&&Number(lead.owner_id)!==user.id)notFound();
+const lead = leads[0];
+
+if (
+  !lead ||
+  lead.enquiry_category !== "school_owner" ||
+  (user.role === "counsellor" &&
+    Number(lead.owner_id) !== user.id) ||
+  !canOwnCategory(
+    user.role,
+    user.department,
+    lead.enquiry_category
+  )
+) {
+  notFound();
+}
  await connection.execute("INSERT IGNORE INTO school_partnerships (lead_id,contact_name,contact_phone,contact_email,stage) VALUES (?,?,?,?,?)",[id,lead.parent_name,lead.primary_phone,lead.email,lead.status==='lost'?'closed':'new']);
  const [records]=await connection.execute<RowDataPacket[]>('SELECT * FROM school_partnerships WHERE lead_id=? FOR UPDATE',[id]);
  return{lead,record:records[0]};

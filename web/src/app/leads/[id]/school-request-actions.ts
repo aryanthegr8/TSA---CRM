@@ -4,6 +4,7 @@ import {revalidatePath} from 'next/cache';
 import type {RowDataPacket,ResultSetHeader} from 'mysql2';
 import {db} from '@/lib/db';
 import {getCurrentUser} from '@/lib/current-user';
+import { canOwnCategory } from "@/lib/departments";
 import {requestedSchoolIdentity,getRequestedSchool,requestedSchoolReady} from '@/lib/requested-school';
 import {futureIndiaTime,validDate} from '@/lib/school-partnership-server';
 export async function saveRequestedSchool(leadId:number,_previous:{message:string},form:FormData){
@@ -13,11 +14,20 @@ export async function saveRequestedSchool(leadId:number,_previous:{message:strin
  const remove=read('operation')==='clear';const exclusive=read('exclusive')==='yes';
  const deadline=read('deadline');const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Kolkata'}).format(new Date());
  if(deadline&&(!validDate(deadline)||deadline<today))return{message:'Use a valid admission deadline from today onward.'};
+ // Confirm an exclusive request before creating or updating related records.
+ if(!remove&&exclusive&&form.get('confirmExclusive')!=='yes')return{message:'Confirm that no alternatives may be shared and other active school options should stop.'};
  const connection=await db.getConnection();
  try{
   await connection.beginTransaction();
   const[leads]=await connection.execute<RowDataPacket[]>('SELECT * FROM leads WHERE id=? FOR UPDATE',[leadId]);const lead=leads[0];
-  if(!lead||lead.enquiry_category!=='boarding_parent'||user.role==='counsellor'&&Number(lead.owner_id)!==user.id)notFound();
+    if (
+    !lead ||
+    lead.enquiry_category !== "boarding_parent" ||
+    (user.role === "counsellor" && Number(lead.owner_id) !== user.id) ||
+    !canOwnCategory(user.role, user.department, lead.enquiry_category)
+    ) {
+    notFound();
+  }
   if(['lost','admitted'].includes(lead.status)){await connection.rollback();return{message:'This parent lead is closed.'};}
   const[currentRows]=await connection.execute<RowDataPacket[]>('SELECT revision,target_id,exclusive_only FROM boarding_school_requests WHERE lead_id=? FOR UPDATE',[leadId]);
   if(read('revision')===''||Number(read('revision'))!==(currentRows[0]?.revision??0)){await connection.rollback();return{message:'Preference changed. Refresh before saving.'};}
@@ -53,8 +63,58 @@ export async function saveRequestedSchool(leadId:number,_previous:{message:strin
    if(targets.length!==1){await connection.rollback();return{message:'Conflicting school identities found. Ask a manager to check the existing enquiries.'};}
    const target=targets[0];ownerLeadId=target.school_owner_lead_id??ownerLeadId;partnerId=target.existing_partner_school_id??partnerId;
    if(!ownerLeadId){
-    const requestedOwner=Number(read('schoolOwner'));const preferredEmail=process.env.CRM_INTAKE_OWNER_EMAIL?.trim().toLowerCase();
-    const[staff]=user.role!=='counsellor'&&Number.isSafeInteger(requestedOwner)&&requestedOwner>0?await connection.execute<RowDataPacket[]>('SELECT id FROM crm_users WHERE id=? AND is_active=1',[requestedOwner]):preferredEmail?await connection.execute<RowDataPacket[]>('SELECT id FROM crm_users WHERE email=? AND is_active=1',[preferredEmail]):await connection.execute<RowDataPacket[]>("SELECT id FROM crm_users WHERE is_active=1 AND role IN ('admin','manager') ORDER BY role='admin' DESC,id LIMIT 1");
+    const requestedOwner = Number(read("schoolOwner"));
+const preferredEmail = process.env.CRM_INTAKE_OWNER_EMAIL
+  ?.trim()
+  .toLowerCase();
+
+let staff: RowDataPacket[] = [];
+
+// 1. Explicitly selected owner (admin/manager only)
+if (
+  user.role !== "counsellor" &&
+  Number.isSafeInteger(requestedOwner) &&
+  requestedOwner > 0
+) {
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    `SELECT id, role, department
+     FROM crm_users
+     WHERE id = ? AND is_active = 1`,
+    [requestedOwner]
+  );
+
+  staff = rows.filter((person) =>
+    canOwnCategory(person.role, person.department, "school_owner")
+  );
+}
+
+// 2. Configured default intake owner
+if (!staff.length && preferredEmail) {
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    `SELECT id, role, department
+     FROM crm_users
+     WHERE email = ? AND is_active = 1`,
+    [preferredEmail]
+  );
+
+  staff = rows.filter((person) =>
+    canOwnCategory(person.role, person.department, "school_owner")
+  );
+}
+
+// 3. Fallback to an active admin or manager
+if (!staff.length) {
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    `SELECT id, role, department
+     FROM crm_users
+     WHERE is_active = 1
+       AND role IN ('admin', 'manager')
+     ORDER BY role = 'admin' DESC, id
+     LIMIT 1`
+  );
+
+  staff = rows;
+}
     if(!staff.length){await connection.rollback();return{message:'No active partnership intake owner found. Ask a manager to configure an owner.'};}
     // Unknown school phones stay empty, never copied from the parent.
     const[family]=await connection.execute<ResultSetHeader>("INSERT INTO families (parent_name,primary_phone) VALUES ('School decision-maker to identify','')");
@@ -66,7 +126,6 @@ export async function saveRequestedSchool(leadId:number,_previous:{message:strin
    await connection.execute('UPDATE boarding_school_targets SET school_owner_lead_id=?,existing_partner_school_id=? WHERE id=?',[ownerLeadId,partnerId,target.id]);
    await connection.execute('INSERT INTO boarding_school_requests (lead_id,target_id,exclusive_only,admission_deadline,preference_note,created_by,revision) VALUES (?,?,?,?,?,?,1) ON DUPLICATE KEY UPDATE target_id=VALUES(target_id),exclusive_only=VALUES(exclusive_only),admission_deadline=VALUES(admission_deadline),preference_note=VALUES(preference_note),revision=revision+1',[leadId,target.id,exclusive?1:0,deadline||null,note,user.id]);
    if(exclusive){
-    if(form.get('confirmExclusive')!=='yes'){await connection.rollback();return{message:'Confirm that no alternatives may be shared and other active school options should stop.'};}
     const[otherRefs]=await connection.execute<RowDataPacket[]>("SELECT id FROM referrals WHERE lead_id=? AND status NOT IN ('admitted','not_proceeding') AND (? IS NULL OR partner_school_id<>?) FOR UPDATE",[leadId,partnerId,partnerId]);
     for(const ref of otherRefs){
      await connection.execute("UPDATE referrals SET status='not_proceeding',closed_reason='Parent requested a specific school only' WHERE id=?",[ref.id]);
@@ -84,6 +143,9 @@ export async function saveRequestedSchool(leadId:number,_previous:{message:strin
   await connection.execute("UPDATE tasks SET completed_at=UTC_TIMESTAMP(3),outcome='School preference updated' WHERE lead_id=? AND completed_at IS NULL AND task_type='call_parent'",[leadId]);
   await connection.execute("INSERT INTO tasks (lead_id,owner_id,title,task_type,due_at) VALUES (?,?,?,'call_parent',?)",[leadId,lead.owner_id??user.id,remove?'Follow up on parent’s school options':'Update parent on requested school partnership',due]);
   await connection.commit();
- }catch(error){await connection.rollback();throw error;}finally{connection.release();}
+ }catch(error){
+  try{await connection.rollback();}catch(rollbackError){console.error('School request rollback failed',rollbackError);}
+  throw error;
+ }finally{connection.release();}
  revalidatePath('/leads','layout');revalidatePath('/dashboard');redirect(`/leads/${leadId}?decisionSaved=1&tab=follow-up`);
 }

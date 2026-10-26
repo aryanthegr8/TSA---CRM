@@ -15,6 +15,7 @@ import ParentDecisionForm from "./parent-decision-form";
 import ReferralsSection from "./referrals-section";
 import { assignLead } from "./assignment";
 import { categoryLabel } from "@/lib/lead-categories";
+import { canOwnCategory } from "@/lib/departments";
 
 type Lead = RowDataPacket & {
   workflow_stage: ParentStage; call_count: number; id: number; parent_name: string | null; primary_phone: string; email: string | null;
@@ -49,6 +50,16 @@ export default async function LeadDetailPage({ params, searchParams }: {
   );
   const lead = rows[0];
   if (!lead) notFound();
+
+  if (
+  !canOwnCategory(
+    user.role,
+    user.department,
+    lead.enquiry_category
+  )
+  ) {
+    notFound();
+  }
   if (lead.enquiry_category === "school_owner") return SchoolOwnerPage({params,searchParams});
   const [staff] = user.role === "counsellor" ? [[] as Staff[]] : await db.query<Staff[]>("SELECT id, name, role FROM crm_users WHERE is_active = 1 ORDER BY name");
   const [[tasks], [activities]] = await Promise.all([

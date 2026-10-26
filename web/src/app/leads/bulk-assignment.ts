@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
+import { canOwnCategory } from "@/lib/departments";
+import type { CrmDepartment } from "@/lib/departments";
 
 export async function bulkAssignLeads(_previous: { message: string; ok: boolean }, form: FormData) {
   const user = await getCurrentUser();
@@ -23,7 +25,7 @@ export async function bulkAssignLeads(_previous: { message: string; ok: boolean 
   try {
     await connection.beginTransaction();
     const [staff] = await connection.execute<RowDataPacket[]>(
-      "SELECT id, name FROM crm_users WHERE id = ? AND is_active = 1 AND role = 'counsellor' FOR UPDATE", [ownerId]
+      "SELECT id, name, department FROM crm_users WHERE id = ? AND is_active = 1 AND role = 'counsellor' FOR UPDATE", [ownerId]
     );
     const [leads] = await connection.execute<RowDataPacket[]>(
       `SELECT id, owner_id FROM leads WHERE id IN (${ids.map(() => "?").join(",")}) AND enquiry_category = ? ORDER BY id FOR UPDATE`, [...ids, category]
@@ -31,6 +33,16 @@ export async function bulkAssignLeads(_previous: { message: string; ok: boolean 
     if (!staff.length || leads.length !== ids.length) {
       await connection.rollback();
       return { message: "The counsellor or selected leads are no longer available. Refresh and try again.", ok: false };
+    }
+    // Validate department inside the transaction, before updating any leads or tasks.
+    // "general" has no counsellor department and must not be bulk-assigned.
+    const assigneeDepartment = staff[0].department as CrmDepartment | null;
+    if (!canOwnCategory("counsellor", assigneeDepartment, category)) {
+      await connection.rollback();
+      return {
+        message: "This counsellor cannot receive leads from the selected department.",
+        ok: false,
+      };
     }
     for (const lead of leads) {
       if (Number(lead.owner_id) === ownerId) continue;

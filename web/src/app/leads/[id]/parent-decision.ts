@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
+import { canOwnCategory } from "@/lib/departments";
 import { parentStageSql } from "@/lib/lead-stage";
 import { stageOutcomeAllowed, type ParentStage, parentOutcomes, schoolRequired, singleSchool } from "@/lib/parent-workflow";
 
@@ -51,7 +52,14 @@ export async function recordParentDecision(leadId: number, _previous: { message:
     await connection.beginTransaction();
     const [leads] = await connection.execute<RowDataPacket[]>(`SELECT owner_id, status, enquiry_category, school_type, ${parentStageSql("leads")} AS workflow_stage, (SELECT COUNT(*) FROM lead_activities ca WHERE ca.lead_id=leads.id AND ca.activity_type='call') AS call_count FROM leads WHERE id = ? FOR UPDATE`, [leadId]);
     const lead = leads[0];
-    if (!lead || lead.enquiry_category === "school_owner" || user.role === "counsellor" && Number(lead.owner_id) !== user.id) notFound();
+    if (
+      !lead ||
+      !["day_parent", "boarding_parent"].includes(lead.enquiry_category) ||
+      (user.role === "counsellor" && Number(lead.owner_id) !== user.id) ||
+      !canOwnCategory(user.role, user.department, lead.enquiry_category)
+    ) {
+      notFound();
+    }
     if (["lost", "admitted"].includes(lead.status)) { await connection.rollback(); return { message: "This lead is already closed. Refresh the page." }; }
     const currentStage = lead.workflow_stage as ParentStage;
     if (read("expectedCallCount") === "" || Number(read("expectedCallCount")) !== Number(lead.call_count) || read("expectedStage") !== currentStage || !stageOutcomeAllowed(currentStage,heading,outcome)) {
@@ -133,8 +141,17 @@ export async function recordParentDecision(leadId: number, _previous: { message:
       await connection.execute("INSERT INTO tasks (lead_id, referral_id, owner_id, title, task_type, due_at) VALUES (?, ?, ?, ?, 'call_parent', ?)", [leadId,singleSchool.includes(outcome) ? refs[0].id : null,lead.owner_id ?? user.id,({ transferred: "Call parent to discuss shared schools", school_contacted: "Discuss school response with parent", comparing: "Confirm the parent’s preferred school", visit_scheduled: "Confirm school visit and collect feedback", visit_rescheduled: "Confirm rescheduled school visit", visit_completed: "Discuss visit feedback and admission decision", proceed: "Follow up on chosen school admission", application: "Check application progress", documents: "Follow up on pending documents", payment: "Follow up on pending admission payment", callback: "Call parent at requested time", next_session: "Reconnect for the next admission session", no_answer: "Retry unanswered parent call", busy: "Retry parent call", unreachable: "Retry unreachable parent number" } as Record<string,string>)[outcome] ?? (requestCalls ? "Confirm school calls and collect parent feedback" : `Follow up with parent: ${label}`),sqlDate(due!)]);
     }
     await connection.commit();
-  } catch (error) { await connection.rollback(); if(error instanceof SchoolPreferenceError)return {message:error.message}; throw error; }
-  finally { connection.release(); }
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (rollbackError) {
+      console.error("Parent decision rollback failed", rollbackError);
+    }
+    if (error instanceof SchoolPreferenceError) return { message: error.message };
+    throw error;
+  } finally {
+    connection.release();
+  }
   revalidatePath("/leads", "layout"); revalidatePath("/dashboard"); revalidatePath("/visits"); revalidatePath("/conversions");
   redirect(`/leads/${leadId}?decisionSaved=1&tab=follow-up`);
 }
