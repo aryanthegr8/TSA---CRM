@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { RowDataPacket } from "mysql2";
-import CrmNavigation from "@/components/crm-navigation";
 
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
@@ -18,7 +17,7 @@ import {
   whereSql,
   workspaceFrom,
 } from "@/lib/lead-workspace-queries";
-import { logout } from "./actions";
+
 
 interface LeadCounts extends RowDataPacket {
   total: number;
@@ -215,26 +214,6 @@ export default async function DashboardPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5">
-          <div>
-            <p className="text-sm font-bold text-blue-700">
-              THE SCHOOL ADMISSION
-            </p>
-            <h1 className="text-xl font-bold">TSA CRM</h1>
-          </div>
-
-          <form action={logout}>
-            <button className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">
-              Sign out
-            </button>
-          </form>
-        </div>
-      </header>
-      <CrmNavigation
-        role={user.role}
-        department={user.department}
-      />
 
       <div className="mx-auto max-w-7xl px-5 py-10">
         <div>

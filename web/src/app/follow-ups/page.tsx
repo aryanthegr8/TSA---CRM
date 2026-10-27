@@ -23,6 +23,18 @@ const pageSize=60;
 export default async function FollowUps({searchParams}:{searchParams:Promise<SearchValues>}){
  const user=await getCurrentUser();if(!user)redirect('/login');const filters=parseTaskFilters(await searchParams);
  const isCounsellor=user.role==='counsellor',now=new Date(),today=indiaDateKey(now),todayBounds=dayBounds(today);
+
+ // Department-specific navigation shortcuts
+const isManager = user.role === "admin" || user.role === "manager";
+
+const showParentLinks =
+  isManager ||
+  (isCounsellor && user.department === "parent_admissions");
+
+const showSchoolLinks =
+  isManager ||
+  (isCounsellor && user.department === "school_partnerships");
+
  const nowSql=now.toISOString().slice(0,23).replace('T',' '),tomorrow=indiaDateKey(new Date(now.getTime()+86400000));
  const scope=taskScope(user,filters,now);
  const summaryColumns=`COUNT(*) total,COUNT(DISTINCT t.lead_id) leads,
@@ -44,7 +56,34 @@ export default async function FollowUps({searchParams}:{searchParams:Promise<Sea
  const link=(patch:Record<string,string>)=>{const params=new URLSearchParams();for(const[key,val]of Object.entries({...filters,page:'1',...patch}))if(val&&key!=='owner'||key==='owner'&&val&&!isCounsellor)params.set(key,String(val));return`/follow-ups?${params}`;};
  const groups=groupByIndiaDate(tasks,t=>t.due_at);const input='mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm';
  return <main className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900 sm:px-6"><div className="mx-auto max-w-7xl">
- <header className="flex flex-wrap items-end justify-between gap-4"><div><Link href="/dashboard" className="text-sm font-medium text-blue-700">← Dashboard</Link><p className="mt-5 text-xs font-semibold uppercase tracking-widest text-slate-400">{isCounsellor?'My scheduled work':'Team workload'}</p><h1 className="mt-2 text-3xl font-bold tracking-tight">Follow-up board</h1><p className="mt-2 text-sm text-slate-500">Every open action, grouped by due date and counsellor. All times are India time.</p></div><div className="flex gap-2"><Link href="/leads/day-parents" className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold">Day-school parents</Link><Link href="/leads/boarding-parents" className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold">Boarding parents</Link><Link href="/leads/school-owners" className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold">New school enquiries</Link></div></header>
+ <header className="flex flex-wrap items-end justify-between gap-4"><div><Link href="/dashboard" className="text-sm font-medium text-blue-700">← Dashboard</Link><p className="mt-5 text-xs font-semibold uppercase tracking-widest text-slate-400">{isCounsellor?'My scheduled work':'Team workload'}</p><h1 className="mt-2 text-3xl font-bold tracking-tight">Follow-up board</h1><p className="mt-2 text-sm text-slate-500">Every open action, grouped by due date and counsellor. All times are India time.</p></div><div className="flex flex-wrap gap-2">
+  {showParentLinks && (
+    <>
+      <Link
+        href="/leads/day-parents"
+        className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold"
+      >
+        Day-school parents
+      </Link>
+
+      <Link
+        href="/leads/boarding-parents"
+        className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold"
+      >
+        Boarding parents
+      </Link>
+    </>
+  )}
+
+  {showSchoolLinks && (
+    <Link
+      href="/leads/school-owners"
+      className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold"
+    >
+      New school enquiries
+    </Link>
+  )}
+</div></header>
  <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">{[{label:'Open tasks',count:total,tone:'text-slate-900',sub:`${totals?.leads??0} unique leads`},{label:'Overdue',count:totals?.overdue??0,tone:'text-rose-700',sub:'Call or update the next action'},{label:'Later today',count:totals?.today??0,tone:'text-blue-700',sub:'Remaining before midnight'},{label:'Future dates',count:totals?.future??0,tone:'text-violet-700',sub:'From tomorrow onward'}].map(card=><div key={card.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-semibold text-slate-500">{card.label}</p><p className={`mt-2 text-3xl font-bold ${card.tone}`}>{card.count}</p><p className="mt-1 text-xs text-slate-400">{card.sub}</p></div>)}</div>
  <form className="mt-5 rounded-2xl border border-slate-200 bg-white p-4"><div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
  {!isCounsellor&&<label className="text-xs font-semibold text-slate-500">Team member<select name="owner" defaultValue={filters.owner} className={input}><option value="">All team members</option>{members.map(member=><option key={member.id} value={member.id}>{member.name}{member.is_active?'':' (inactive)'}</option>)}</select></label>}
