@@ -25,6 +25,15 @@ const workOptions={unassigned:'Unassigned',overdue:'Overdue follow-ups',no_next:
 export default async function LeadInbox({searchParams,inbox}:{searchParams:Promise<SearchValues>;inbox:'boarding_parent'|'day_parent'|'school_owner'|'general'}){
  const user=await getCurrentUser();if(!user)redirect('/login');const raw=await searchParams;
  const read=(key:string)=>singleValue(raw[key]);const isCounsellor=user.role==='counsellor';
+ const isManager = user.role === "admin" || user.role === "manager";
+
+const showParentCategories =
+  isManager ||
+  (isCounsellor && user.department === "parent_admissions");
+
+const showSchoolCategories =
+  isManager ||
+  (isCounsellor && user.department === "school_partnerships");
  const q=read('q').trim().slice(0,100),source=sources.includes(read('source'))?read('source'):'';
  const status=stages.includes(read('status'))?read('status'):'';
  const schoolType=inbox==='school_owner'&&['day','boarding','both'].includes(read('schoolType'))?read('schoolType'):'';
@@ -93,7 +102,40 @@ export default async function LeadInbox({searchParams,inbox}:{searchParams:Promi
  })}</Fragment>)}</tbody></table>}</div>;
  return <main className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900 sm:px-6"><div className="mx-auto max-w-7xl">
  <header className="flex flex-wrap items-end justify-between gap-4"><div><Link href="/dashboard" className="text-sm font-medium text-blue-700">← Dashboard</Link><p className="mt-5 text-xs font-semibold uppercase tracking-widest text-slate-400">Lead inbox · {isCounsellor?'My enquiries':'Team enquiries'}</p><h1 className="mt-2 text-3xl font-bold tracking-tight">{title}</h1><p className="mt-2 text-sm text-slate-500">New enquiries land here. Work scheduled calls and school tasks from the follow-up board.</p></div><div className="flex gap-2"><Link href={followUpUrl} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Follow-up board →</Link><Link href={`/leads/new?category=${inbox}`} className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold">+ Add lead</Link></div></header>
- <nav aria-label="Lead categories" className="mt-6 flex flex-wrap gap-2">{[['/leads/day-parents','Day-school parents'],['/leads/boarding-parents','Boarding parents'],['/leads/school-owners','School owners'],['/leads','Other enquiries']].map(([href,label])=><Link key={href} href={href} aria-current={href===basePath?'page':undefined} className={`rounded-lg px-4 py-2 text-sm font-semibold ${href===basePath?'bg-blue-700 text-white':'border border-slate-200 bg-white text-slate-600'}`}>{label}</Link>)}</nav>
+ <nav
+  aria-label="Lead categories"
+  className="mt-6 flex flex-wrap gap-2"
+>
+  {[
+    ...(showParentCategories
+      ? [
+          ["/leads/day-parents", "Day-school parents"],
+          ["/leads/boarding-parents", "Boarding parents"],
+        ]
+      : []),
+
+    ...(showSchoolCategories
+      ? [["/leads/school-owners", "School owners"]]
+      : []),
+
+    ...(isManager
+      ? [["/leads", "Other enquiries"]]
+      : []),
+  ].map(([href, label]) => (
+    <Link
+      key={href}
+      href={href}
+      aria-current={href === basePath ? "page" : undefined}
+      className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+        href === basePath
+          ? "bg-blue-700 text-white"
+          : "border border-slate-200 bg-white text-slate-600"
+      }`}
+    >
+      {label}
+    </Link>
+  ))}
+</nav>
  <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[{key:'incoming',label:'New leads',count:counts?.incoming??0,description:'Awaiting first contact'},{key:'missing',label:'Needs scheduling',count:counts?.missing??0,description:'Open, without a pending task'},{key:'scheduled',label:'Scheduled work',count:counts?.scheduled??0,description:'Leads with open tasks'},{key:'all',label:'All leads',count:counts?.total??0,description:'Full records and history'}].map(card=><Link key={card.key} href={card.key==='scheduled'?followUpUrl:link({view:card.key,status:'',workflow:'',partnership:'',work:'',page:'1'})} aria-current={card.key===view?'page':undefined} className={`rounded-2xl border bg-white p-4 shadow-sm ${view===card.key?'border-blue-500 ring-1 ring-blue-100':'border-slate-200 hover:border-slate-400'}`}><p className="text-xs font-semibold text-slate-500">{card.label}</p><p className="mt-2 text-3xl font-bold">{card.count}</p><p className="mt-1 text-xs text-slate-400">{card.description}</p></Link>)}</div>
  <form action={basePath} className="mt-5 rounded-2xl border border-slate-200 bg-white p-4"><input type="hidden" name="view" value={view}/><div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-5"><label className="text-xs font-semibold text-slate-500 lg:col-span-2">Search {inbox==='school_owner'?'school, contact or phone':'parent, student or phone'}<input name="q" defaultValue={q} maxLength={100} placeholder="Find an enquiry…" className={input}/></label><label className="text-xs font-semibold text-slate-500">Source<select name="source" defaultValue={source} className={input}><option value="">All sources</option>{sources.map(s=><option key={s} value={s}>{s.replaceAll('_',' ')}</option>)}</select></label>{!isCounsellor&&<label className="text-xs font-semibold text-slate-500">Counsellor<select name="owner" defaultValue={owner} className={input}><option value="">All team members</option><option value="unassigned">Unassigned</option>{owners.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label>}<div className="flex items-center gap-3"><button className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white">Filter</button><Link href={`${basePath}?view=${view}`} className="text-sm text-slate-500">Reset</Link></div></div>
  {inbox==='school_owner'&&<label className="mt-3 block max-w-xs text-xs font-semibold text-slate-500">School type<select name="schoolType" defaultValue={schoolType} className={input}><option value="">All types</option>{['boarding','day','both'].map(t=><option key={t} value={t}>{t}</option>)}</select></label>}
