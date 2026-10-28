@@ -80,13 +80,40 @@ const showSchoolCategories =
  const params={q,source,owner,schoolType,status,partnership,workflow,work,view};
  const link=(patch:Record<string,string>)=>{const url=new URLSearchParams();for(const[k,v]of Object.entries({...params,...patch}))if(v)url.set(k,v);return`${basePath}?${url}`;};
  const followUpUrl=`/follow-ups?${new URLSearchParams({category:inbox,...(owner&&owner!=='unassigned'?{owner}:{})})}`;
- const counts=summary[0];const today=indiaDateKey(new Date());const groups=groupByIndiaDate(leads,lead=>lead.received_at);
+ const counts = summary[0];
+  const now = new Date();
+  const today = indiaDateKey(now);
+  const groups = groupByIndiaDate(leads, lead => lead.received_at);
  const input='mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
  const table=<div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
  {!leads.length?<div className="p-12 text-center"><p className="font-semibold text-slate-800">{view==='incoming'?'No new enquiries waiting here':'No leads match this view'}</p><p className="mt-2 text-sm text-slate-500">{view==='incoming'?'Your scheduled work is available on the follow-up board.':'Try another filter or open All leads.'}</p><Link href={followUpUrl} className="mt-4 inline-block text-sm font-semibold text-blue-700">Open follow-up board →</Link></div>:
  <table className="w-full min-w-[950px] text-left text-sm"><thead className="bg-white text-xs uppercase tracking-wide text-slate-500"><tr>{!isCounsellor&&<th className="px-4 py-4"><span className="sr-only">Select for assignment</span></th>}<th className="px-5 py-4">Lead & requirement</th><th className="px-5 py-4">Progress & last contact</th><th className="px-5 py-4">Counsellor</th><th className="px-5 py-4">Next action</th></tr></thead>
  <tbody>{groups.map(group=><Fragment key={group.key}><tr className="border-y border-slate-200 bg-slate-100/80"><th colSpan={isCounsellor?4:5} scope="colgroup" className="px-5 py-3 text-xs font-semibold tracking-wide text-slate-700">{group.key===today?'Today · ':''}{group.label}<span className="ml-3 font-normal text-slate-500">{group.items.length} on this page · received date</span></th></tr>{group.items.map(lead=>{
  const tone=leadTone(lead),contact=contactBadge(lead.last_outcome);const closed=['admitted','lost'].includes(lead.status)||['confirmed','closed'].includes(lead.partnership_stage);
+ const isOverdue =
+  !closed &&
+  lead.due_at !== null &&
+  new Date(lead.due_at) < now;
+
+ const needsScheduling =
+  !closed &&
+  lead.due_at === null;
+
+ const followUpStatus = closed
+  ? "Closed"
+  : isOverdue
+    ? "Overdue"
+    : needsScheduling
+      ? "Needs scheduling"
+      : "Scheduled";
+
+ const followUpTone = closed
+  ? "bg-slate-100 text-slate-600"
+  : isOverdue
+    ? "bg-rose-100 text-rose-800"
+    : needsScheduling
+      ? "bg-amber-100 text-amber-800"
+      : "bg-blue-100 text-blue-800";
  return <tr key={lead.id} className={`border-b border-slate-100 align-top last:border-b-0 ${rowTones[tone]}`}>
  {!isCounsellor&&<td className={`border-l-4 px-4 py-5 ${rowTones[tone]}`}><input type="checkbox" name="leadId" value={lead.id} aria-label={`Select lead ${lead.id}`}/></td>}
  <td className={`px-5 py-5 ${isCounsellor?`border-l-4 ${rowTones[tone]}`:''}`}><div className="flex flex-wrap items-center gap-2"><Link href={`/leads/${lead.id}`} className="font-semibold text-slate-900 hover:text-blue-700 hover:underline">{inbox==='school_owner'?lead.school_name||'School name to confirm':lead.parent_name||'Contact not recorded'}</Link><span className="text-xs text-slate-400">#{lead.id}</span></div>
@@ -98,7 +125,48 @@ const showSchoolCategories =
  {contact&&<p className="mt-3 text-xs text-slate-500">Last contact: <span className={`ml-1 inline-block rounded-md border px-2 py-1 ${badgeTones[contact.tone]}`}>{contact.label}</span></p>}
  {!contact&&lead.is_incoming>0&&<p className="mt-2 text-xs text-blue-700">First contact pending</p>}{lead.status==='on_hold'&&<p className="mt-2 text-xs text-slate-500">On hold · follow-up retained</p>}</td>
  <td className="px-5 py-5"><span className={`inline-block rounded-lg px-2.5 py-1.5 text-xs font-medium ${lead.owner_name?'bg-white text-slate-700 ring-1 ring-slate-200':'bg-rose-50 text-rose-800'}`}>{lead.owner_name||'Unassigned'}</span></td>
- <td className="max-w-64 px-5 py-5"><p className="text-sm text-slate-700">{closed?'Completed / closed':lead.next_action||'Needs scheduling'}</p>{!closed&&lead.due_at?<p className={`mt-2 text-xs font-medium ${new Date(lead.due_at)<new Date()?'text-rose-700':'text-slate-500'}`}>{new Date(lead.due_at)<new Date()?'Overdue · ':''}{new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date(lead.due_at))}</p>:!closed&&<p className="mt-2 text-xs text-rose-700">Set a next action to keep this lead moving.</p>}</td></tr>;
+ <td className="max-w-64 px-5 py-5">
+  <span
+    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${followUpTone}`}
+  >
+    {followUpStatus}
+  </span>
+
+  <p className="mt-3 text-sm font-medium text-slate-700">
+    {closed
+      ? "Completed / closed"
+      : lead.next_action || "No next action scheduled"}
+  </p>
+
+  {!closed && lead.due_at && (
+    <p
+      className={`mt-2 text-xs font-medium ${
+        isOverdue ? "text-rose-700" : "text-slate-500"
+      }`}
+    >
+      {new Intl.DateTimeFormat("en-IN", {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: "Asia/Kolkata",
+      }).format(new Date(lead.due_at))}
+    </p>
+  )}
+
+  {!closed && (
+    <Link
+      href={`/leads/${lead.id}?tab=follow-up`}
+      className={`mt-3 inline-block text-xs font-semibold hover:underline ${
+        isOverdue
+          ? "text-rose-700"
+          : needsScheduling
+            ? "text-amber-800"
+            : "text-blue-700"
+      }`}
+    >
+      {needsScheduling ? "Schedule follow-up →" : "Open & Update →"}
+    </Link>
+  )}
+</td></tr>;
  })}</Fragment>)}</tbody></table>}</div>;
  return <main className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900 sm:px-6"><div className="mx-auto max-w-7xl">
  <header className="flex flex-wrap items-end justify-between gap-4"><div><Link href="/dashboard" className="text-sm font-medium text-blue-700">← Dashboard</Link><p className="mt-5 text-xs font-semibold uppercase tracking-widest text-slate-400">Lead inbox · {isCounsellor?'My enquiries':'Team enquiries'}</p><h1 className="mt-2 text-3xl font-bold tracking-tight">{title}</h1><p className="mt-2 text-sm text-slate-500">New enquiries land here. Work scheduled calls and school tasks from the follow-up board.</p></div><div className="flex gap-2"><Link href={followUpUrl} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Follow-up board →</Link><Link href={`/leads/new?category=${inbox}`} className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold">+ Add lead</Link></div></header>
