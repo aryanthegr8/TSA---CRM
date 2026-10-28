@@ -33,6 +33,23 @@ interface TaskCounts extends RowDataPacket {
   today: number;
 }
 
+interface DepartmentSummary extends RowDataPacket {
+  category: string;
+  active_leads: number;
+  unassigned_leads: number;
+  pending_tasks: number;
+  overdue_tasks: number;
+}
+
+interface CounsellorWorkload extends RowDataPacket {
+  id: number;
+  name: string;
+  department: string | null;
+  active_leads: number;
+  pending_tasks: number;
+  overdue_tasks: number;
+}
+
 export default async function DashboardPage() {
   const user = await getCurrentUser();
 
@@ -117,6 +134,184 @@ export default async function DashboardPage() {
       [nowSql, nowSql, today.end, ...scope.args]
     ),
   ]);
+
+
+  let departmentSummary: DepartmentSummary[] = [];
+
+  if (isManager) {
+    const [rows] = await db.execute<DepartmentSummary[]>(
+      `
+      SELECT
+        d.category,
+
+        (
+          SELECT COUNT(*)
+          FROM leads l
+          LEFT JOIN school_partnerships sp ON sp.lead_id = l.id
+          WHERE (${activeLeadSql})
+            AND (
+              (d.category = 'school_partnerships'
+                AND l.enquiry_category = 'school_owner')
+              OR
+              (d.category = 'parent_admissions'
+                AND l.enquiry_category IN ('day_parent', 'boarding_parent'))
+            )
+        ) AS active_leads,
+
+        (
+          SELECT COUNT(*)
+          FROM leads l
+          LEFT JOIN school_partnerships sp ON sp.lead_id = l.id
+          WHERE (${activeLeadSql})
+            AND l.owner_id IS NULL
+            AND (
+              (d.category = 'school_partnerships'
+                AND l.enquiry_category = 'school_owner')
+              OR
+              (d.category = 'parent_admissions'
+                AND l.enquiry_category IN ('day_parent', 'boarding_parent'))
+            )
+        ) AS unassigned_leads,
+
+        (
+          SELECT COUNT(*)
+          FROM tasks t
+          JOIN leads l ON l.id = t.lead_id
+          LEFT JOIN school_partnerships sp ON sp.lead_id = l.id
+          LEFT JOIN referrals r ON r.id = t.referral_id
+          WHERE t.completed_at IS NULL
+            AND (${activeLeadSql})
+            AND (
+              t.referral_id IS NULL
+              OR r.status NOT IN ('not_proceeding', 'admitted')
+            )
+            AND (
+              (d.category = 'school_partnerships'
+                AND l.enquiry_category = 'school_owner')
+              OR
+              (d.category = 'parent_admissions'
+                AND l.enquiry_category IN ('day_parent', 'boarding_parent'))
+            )
+        ) AS pending_tasks,
+
+        (
+          SELECT COUNT(*)
+          FROM tasks t
+          JOIN leads l ON l.id = t.lead_id
+          LEFT JOIN school_partnerships sp ON sp.lead_id = l.id
+          LEFT JOIN referrals r ON r.id = t.referral_id
+          WHERE t.completed_at IS NULL
+            AND (${activeLeadSql})
+            AND t.due_at < ?
+            AND (
+              t.referral_id IS NULL
+              OR r.status NOT IN ('not_proceeding', 'admitted')
+            )
+            AND (
+              (d.category = 'school_partnerships'
+                AND l.enquiry_category = 'school_owner')
+              OR
+              (d.category = 'parent_admissions'
+                AND l.enquiry_category IN ('day_parent', 'boarding_parent'))
+            )
+        ) AS overdue_tasks
+
+      FROM (
+        SELECT 'school_partnerships' AS category
+        UNION ALL
+        SELECT 'parent_admissions' AS category
+      ) d
+      `,
+      [nowSql]
+    );
+
+    departmentSummary = rows;
+  }
+  let counsellorWorkload: CounsellorWorkload[] = [];
+
+if (isManager) {
+  const [rows] = await db.execute<CounsellorWorkload[]>(
+    `
+    SELECT
+      u.id,
+      u.name,
+      u.department,
+
+      (
+        SELECT COUNT(*)
+        FROM leads l
+        LEFT JOIN school_partnerships sp
+          ON sp.lead_id = l.id
+        WHERE l.owner_id = u.id
+          AND (${activeLeadSql})
+          AND (
+            (u.department = 'school_partnerships'
+              AND l.enquiry_category = 'school_owner')
+            OR
+            (u.department = 'parent_admissions'
+              AND l.enquiry_category IN ('day_parent', 'boarding_parent'))
+          )
+      ) AS active_leads,
+
+      (
+        SELECT COUNT(*)
+        FROM tasks t
+        JOIN leads l ON l.id = t.lead_id
+        LEFT JOIN school_partnerships sp
+          ON sp.lead_id = l.id
+        LEFT JOIN referrals r ON r.id = t.referral_id
+        WHERE t.owner_id = u.id
+          AND l.owner_id = u.id
+          AND t.completed_at IS NULL
+          AND (${activeLeadSql})
+          AND (
+            t.referral_id IS NULL
+            OR r.status NOT IN ('not_proceeding', 'admitted')
+          )
+          AND (
+            (u.department = 'school_partnerships'
+              AND l.enquiry_category = 'school_owner')
+            OR
+            (u.department = 'parent_admissions'
+              AND l.enquiry_category IN ('day_parent', 'boarding_parent'))
+          )
+      ) AS pending_tasks,
+
+      (
+        SELECT COUNT(*)
+        FROM tasks t
+        JOIN leads l ON l.id = t.lead_id
+        LEFT JOIN school_partnerships sp
+          ON sp.lead_id = l.id
+        LEFT JOIN referrals r ON r.id = t.referral_id
+        WHERE t.owner_id = u.id
+          AND l.owner_id = u.id
+          AND t.completed_at IS NULL
+          AND t.due_at < ?
+          AND (${activeLeadSql})
+          AND (
+            t.referral_id IS NULL
+            OR r.status NOT IN ('not_proceeding', 'admitted')
+          )
+          AND (
+            (u.department = 'school_partnerships'
+              AND l.enquiry_category = 'school_owner')
+            OR
+            (u.department = 'parent_admissions'
+              AND l.enquiry_category IN ('day_parent', 'boarding_parent'))
+          )
+      ) AS overdue_tasks
+
+    FROM crm_users u
+    WHERE u.role = 'counsellor'
+      AND u.is_active = 1
+    ORDER BY u.department, u.name
+    `,
+    [nowSql]
+  );
+
+  counsellorWorkload = rows;
+}
 
   const leads = leadResult[0][0];
   const tasks = taskResult[0][0];
@@ -249,6 +444,268 @@ export default async function DashboardPage() {
             </Link>
           ))}
         </section>
+
+        {isManager && (
+      <section className="mt-10">
+        <div>
+          <h3 className="text-xl font-bold">Department Overview</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Compare active leads and follow-up workloads across departments.
+          </p>
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          {departmentSummary.map((department) => {
+            const isSchoolDepartment =
+              department.category === "school_partnerships";
+
+            const departmentName = isSchoolDepartment
+              ? "School Partnerships"
+              : "Parent Admissions";
+
+            return (
+              <div
+                key={department.category}
+                className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+              >
+                <h4 className="text-lg font-bold">{departmentName}</h4>
+
+                <div className="mt-5 grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-slate-500">Active Leads</p>
+                    <p className="mt-1 text-3xl font-bold">
+                      {Number(department.active_leads)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-500">Pending Tasks</p>
+                    <p className="mt-1 text-3xl font-bold">
+                      {Number(department.pending_tasks)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-500">Unassigned Leads</p>
+                    <p className="mt-1 text-2xl font-bold text-amber-700">
+                      {Number(department.unassigned_leads)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-500">Overdue Tasks</p>
+                    <p className="mt-1 text-2xl font-bold text-rose-700">
+                      {Number(department.overdue_tasks)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex flex-wrap gap-4 border-t pt-4">
+                  {isSchoolDepartment ? (
+                    <>
+                      <Link
+                        href="/leads/school-owners"
+                        className="text-sm font-semibold text-blue-700 hover:underline"
+                      >
+                        School Leads →
+                      </Link>
+
+                      <Link
+                        href="/follow-ups?category=school_owner"
+                        className="text-sm font-semibold text-blue-700 hover:underline"
+                      >
+                        Follow-ups →
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <Link
+                        href="/leads/day-parents"
+                        className="text-sm font-semibold text-blue-700 hover:underline"
+                      >
+                        Day Parents →
+                      </Link>
+
+                      <Link
+                        href="/leads/boarding-parents"
+                        className="text-sm font-semibold text-blue-700 hover:underline"
+                      >
+                        Boarding Parents →
+                      </Link>
+
+                      <Link
+                        href="/follow-ups"
+                        className="text-sm font-semibold text-blue-700 hover:underline"
+                      >
+                        Follow-up Board →
+                      </Link>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    )}
+
+        {isManager && (
+          <section className="mt-10">
+            <div>
+              <h3 className="text-xl font-bold">Counsellor Workload</h3>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Monitor active leads and pending follow-ups assigned to each counsellor.
+              </p>
+            </div>
+
+            <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <table className="w-full min-w-[700px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-4">Counsellor</th>
+                    <th className="px-5 py-4">Department</th>
+                    <th className="px-5 py-4">Active Leads</th>
+                    <th className="px-5 py-4">Pending Tasks</th>
+                    <th className="px-5 py-4">Overdue Tasks</th>
+                    <th className="px-5 py-4">Action</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {counsellorWorkload.map((counsellor) => (
+                    <tr
+                      key={counsellor.id}
+                      className="border-t border-slate-100"
+                    >
+                      <td className="px-5 py-4 font-semibold text-slate-900">
+                        {counsellor.name}
+                      </td>
+
+                      <td className="px-5 py-4 text-slate-600">
+                        {counsellor.department === "school_partnerships"
+                          ? "School Partnerships"
+                          : counsellor.department === "parent_admissions"
+                            ? "Parent Admissions"
+                            : "Not assigned"}
+                      </td>
+
+                      <td className="px-5 py-4 font-semibold">
+                        {Number(counsellor.active_leads)}
+                      </td>
+
+                      <td className="px-5 py-4 font-semibold">
+                        {Number(counsellor.pending_tasks)}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span
+                          className={
+                            Number(counsellor.overdue_tasks) > 0
+                              ? "font-bold text-rose-700"
+                              : "text-slate-600"
+                          }
+                        >
+                          {Number(counsellor.overdue_tasks)}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <Link
+                          href={`/follow-ups?owner=${counsellor.id}`}
+                          className="font-semibold text-blue-700 hover:underline"
+                        >
+                          View Tasks →
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {counsellorWorkload.length === 0 && (
+                <p className="p-6 text-sm text-slate-500">
+                  No active counsellors found.
+                </p>
+              )}
+            </div>
+          </section>
+        )}
+
+        {isManager && (
+          <section className="mt-10">
+            <div>
+              <h3 className="text-xl font-bold">
+                Management Quick Actions
+              </h3>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Identify unassigned enquiries and follow-ups that need attention.
+              </p>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                {
+                  label: "Overdue Follow-ups",
+                  description: "Review overdue tasks across all departments.",
+                  href: "/follow-ups?period=overdue",
+                  tone: "border-rose-200 bg-rose-50 text-rose-800",
+                },
+                {
+                  label: "School Leads Without Next Action",
+                  description: "School partnership enquiries needing scheduling.",
+                  href: "/leads/school-owners?view=all&work=no_next",
+                  tone: "border-amber-200 bg-amber-50 text-amber-800",
+                },
+                {
+                  label: "Day Parents Without Next Action",
+                  description: "Day-school enquiries needing scheduling.",
+                  href: "/leads/day-parents?view=all&work=no_next",
+                  tone: "border-amber-200 bg-amber-50 text-amber-800",
+                },
+                {
+                  label: "Boarding Parents Without Next Action",
+                  description: "Boarding enquiries needing scheduling.",
+                  href: "/leads/boarding-parents?view=all&work=no_next",
+                  tone: "border-amber-200 bg-amber-50 text-amber-800",
+                },
+                {
+                  label: "Unassigned School Leads",
+                  description: "School partnership enquiries awaiting assignment.",
+                  href: "/leads/school-owners?view=all&work=unassigned",
+                  tone: "border-blue-200 bg-blue-50 text-blue-800",
+                },
+                {
+                  label: "Unassigned Day Parents",
+                  description: "Day-school enquiries awaiting assignment.",
+                  href: "/leads/day-parents?view=all&work=unassigned",
+                  tone: "border-violet-200 bg-violet-50 text-violet-800",
+                },
+                {
+                  label: "Unassigned Boarding Parents",
+                  description: "Boarding enquiries awaiting assignment.",
+                  href: "/leads/boarding-parents?view=all&work=unassigned",
+                  tone: "border-violet-200 bg-violet-50 text-violet-800",
+                },
+              ].map((action) => (
+                <Link
+                  key={action.href}
+                  href={action.href}
+                  className={`rounded-2xl border p-5 transition hover:shadow-md ${action.tone}`}
+                >
+                  <p className="text-sm font-bold">
+                    {action.label} →
+                  </p>
+
+                  <p className="mt-2 text-xs opacity-80">
+                    {action.description}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="mt-10">
           <h3 className="text-xl font-bold">Quick Actions</h3>
